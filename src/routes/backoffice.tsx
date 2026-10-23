@@ -273,7 +273,7 @@ function Backoffice() {
   );
   const detailRequest = detail ? requests.find(r => r.code === detail) : null;
 
-  const identifyProcess = (event: FormEvent<HTMLFormElement>) => {
+  const identifyProcess = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const code = String(data.get("code") ?? "").trim().toUpperCase();
@@ -285,6 +285,20 @@ function Backoffice() {
     all[`${code}|${doc}`] = existing; persistProcesses(all);
     setRecord(existing); setDeferral(null); setInterrupted(false); setRejected(false); setEditing(false); setProcessError(""); setProcessStep(existing.step);
     setPriorOutcome(loadOutcomes()[doc]);
+    // Con sesión institucional, vincula el proceso a la solicitud y al donante reales.
+    if (staffUser) {
+      const { data: reqRow } = await supabase.from("blood_requests").select("id").eq("code", code).eq("status", "en_proceso").maybeSingle();
+      const { data: donor } = await supabase.from("profiles").select("id").eq("document_number", doc.replace(/\D/g, "")).maybeSingle();
+      if (reqRow && donor) {
+        const { data: existingDonation } = await supabase.from("donations").select("id").eq("request_id", reqRow.id).eq("donor_id", donor.id).maybeSingle();
+        if (existingDonation) {
+          setDonationCtx({ requestId: reqRow.id, donorId: donor.id, donationId: existingDonation.id });
+        } else {
+          const { data: created } = await supabase.from("donations").insert({ request_id: reqRow.id, donor_id: donor.id, status: "en_establecimiento" }).select("id").single();
+          setDonationCtx({ requestId: reqRow.id, donorId: donor.id, donationId: created?.id ?? null });
+        }
+      } else setDonationCtx(null);
+    }
     try {
       const saved = JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null");
       const hasAnswers = saved && typeof saved === "object" && !Array.isArray(saved);
