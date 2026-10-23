@@ -212,6 +212,7 @@ function Backoffice() {
     const existing = all[`${code}|${doc}`] ?? { code, donorDoc: doc, step: "tamizaje" as Step };
     all[`${code}|${doc}`] = existing; persistProcesses(all);
     setRecord(existing); setEditing(false); setProcessError(""); setProcessStep(existing.step);
+    setPriorOutcome(loadOutcomes()[doc]); try { setQuiz(JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null")); } catch { setQuiz(null); }
   };
   const updateRecord = (patch: Partial<ProcessRecord>) => {
     if (!record) return;
