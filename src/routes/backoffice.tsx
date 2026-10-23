@@ -1,12 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { Activity, ArrowRight, Building2, ClipboardPlus, Droplets, Eye, EyeOff, FileText, Heart, HeartPulse, LayoutDashboard, Lock, LogOut, Megaphone, Monitor, Search, Smartphone, User, UserPlus, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Building2, ClipboardPlus, Droplets, Eye, EyeOff, FileText, Heart, HeartPulse, LayoutDashboard, Lock, LogOut, Megaphone, Monitor, Search, Smartphone, User, UserPlus, Users, X, type LucideIcon } from "lucide-react";
 import { NexoLogo } from "@/components/nexovital/logo";
 import { Button } from "@/components/ui/button";
 import { CphAdmin } from "@/components/nexovital/cph-admin";
 import { LiquidRed } from "@/components/nexovital/liquid-red";
 import { daysUntil, loadOutcomes, saveOutcome, type Outcome } from "@/lib/donor-eligibility";
-import { CLINICAL_FIELDS, CLINICAL_STEPS, normalizeClinicalStep, PREDONATION_QUESTIONS, questionnaireReview, type ClinicalStep } from "@/lib/clinical-evaluation";
+import { CLINICAL_FIELDS, CLINICAL_STEPS, DEMO_DIGITAL_ANSWERS, DONATION_INTERRUPTION_REASONS, UNIT_REJECTION_REASONS, resolveClinicalReason, normalizeClinicalStep, PREDONATION_QUESTIONS, questionnaireReview, type ClinicalStep } from "@/lib/clinical-evaluation";
 
 export const Route = createFileRoute("/backoffice")({
   head: () => ({ meta: [
@@ -120,6 +120,10 @@ function Backoffice() {
   const [interrupted, setInterrupted] = useState(false);
   const [rejected, setRejected] = useState(false);
   const [priorOutcome, setPriorOutcome] = useState<Outcome | undefined>();
+  const [interruptionReason, setInterruptionReason] = useState(DONATION_INTERRUPTION_REASONS[0]);
+  const [rejectionReason, setRejectionReason] = useState(UNIT_REJECTION_REASONS[0]);
+  const [rejectionStatus, setRejectionStatus] = useState("temporal");
+  const [demoQuiz, setDemoQuiz] = useState(false);
   const [quiz, setQuiz] = useState<Record<string, unknown> | null>(null);
 
   const open = (kind: DialogKind) => { setNotice(""); setDialog(kind); };
@@ -216,14 +220,20 @@ function Backoffice() {
     const existing = all[`${code}|${doc}`] ?? { code, donorDoc: doc, step: "evaluacion" as Step };
     all[`${code}|${doc}`] = existing; persistProcesses(all);
     setRecord(existing); setDeferral(null); setInterrupted(false); setRejected(false); setEditing(false); setProcessError(""); setProcessStep(existing.step);
-    setPriorOutcome(loadOutcomes()[doc]); try { setQuiz(JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null")); } catch { setQuiz(null); }
+    setPriorOutcome(loadOutcomes()[doc]);
+    try {
+      const saved = JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null");
+      const hasAnswers = saved && typeof saved === "object" && !Array.isArray(saved);
+      setQuiz(hasAnswers ? saved : DEMO_DIGITAL_ANSWERS); setDemoQuiz(!hasAnswers);
+    } catch { setQuiz(DEMO_DIGITAL_ANSWERS); setDemoQuiz(true); }
+    setInterruptionReason(DONATION_INTERRUPTION_REASONS[0]); setRejectionReason(UNIT_REJECTION_REASONS[0]); setRejectionStatus("temporal");
   };
   const updateRecord = (patch: Partial<ProcessRecord>) => {
     if (!record) return;
     const next = { ...record, ...patch, updatedBy: "Valeria M." };
     const all = loadProcesses(); all[`${next.code}|${next.donorDoc}`] = next; persistProcesses(all); setRecord(next);
   };
-  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => { setEditing(false); setDeferral(null); setProcessStep(step); if (record) updateRecord({ ...patch, step }); };
+  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => { setEditing(false); setDeferral(null); setInterrupted(false); setRejected(false); setProcessStep(step); if (record) updateRecord({ ...patch, step }); };
   const finishProcess = (status: string, result: string) => {
     if (!record) return;
     const ok = status === "Exitosa";
@@ -310,7 +320,7 @@ function Backoffice() {
                   {questionnaireReview(quiz).complete ? "Cuestionario digital completo" : "Cuestionario digital incompleto"}
                   {questionnaireReview(quiz).alerts.length ? ` · ${questionnaireReview(quiz).alerts.length} respuestas para revisión médica` : questionnaireReview(quiz).complete ? " · Sin factores de riesgo declarados" : ""}
                 </p>
-                <p className="mt-2 text-xs text-muted-foreground">Respuestas declaradas por el donante · La aptitud la determina el profesional.</p>
+                <p className="mt-2 text-xs text-muted-foreground">{demoQuiz ? "Cuestionario de ejemplo · Demostración con respuestas completas y favorables." : "Respuestas declaradas por el donante."} La aptitud la determina el profesional.</p>
                 <ul className="mt-3 divide-y">{PREDONATION_QUESTIONS.map((question, i) => <li key={question} className={`flex items-start justify-between gap-3 py-2 text-xs ${questionnaireReview(quiz).alerts.some(a => a.question === question) ? "font-bold text-chart-gold" : ""}`}><span>{question}</span><b className="shrink-0">{String(quiz[i] ?? "Sin respuesta")}</b></li>)}</ul>
               </div> : <div className="mt-3 text-sm"><p>El donante no llenó el cuestionario digital.</p><Button size="sm" variant={record.paperForm ? "default" : "outline"} className="mt-2" onClick={() => updateRecord({ paperForm: true })}>{record.paperForm ? "✓ Llenado en formulario físico (papel)" : "Llenado en formulario físico (papel)"}</Button></div>}
               <p className="mt-5 text-xs font-extrabold uppercase text-muted-foreground">Semáforo de aptitud inmediata · antes de la punción</p>
@@ -326,30 +336,47 @@ function Backoffice() {
               </form>}
             </div>}
             {processStep === "donacion" && record && <div className="mt-5">
-              <h3 className="font-extrabold">Donación (sillón / extracción)</h3>
-              <p className="mt-2 text-sm text-muted-foreground">Registra solo el evento físico de flebotomía.</p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => goStep("evaluacion")}>Volver a evaluación clínica</Button>
-                <Button variant="vivid" onClick={() => goStep("laboratorio", { donation: "realizada" })}>Donación realizada</Button>
-                <Button variant="destructive" onClick={() => setInterrupted(true)}>Donación no realizada / interrumpida</Button>
+              <h3 className="font-extrabold">Donación · extracción</h3>
+              <div className="mt-5 grid gap-3">
+                <Button className="h-auto min-h-12 justify-between whitespace-normal py-3 text-left" variant="vivid" disabled={interrupted} onClick={() => goStep("laboratorio", { donation: "realizada" })}><span className="flex items-center gap-2"><CheckCircle2 className="shrink-0" />Donación realizada</span><ArrowRight className="shrink-0" /></Button>
+                <Button className="h-auto min-h-12 justify-start whitespace-normal py-3 text-left" variant="outline" onClick={() => setInterrupted(true)}><AlertTriangle className="shrink-0 text-destructive" />Donación no realizada / interrumpida</Button>
               </div>
-              {interrupted && <form className="mt-4 flex flex-wrap items-end gap-2 rounded-lg border p-4" onSubmit={e => { e.preventDefault(); const reason = String(new FormData(e.currentTarget).get("reason")); setInterrupted(false); finishProcess("No realizada", `Donación no realizada · ${reason}`); }}>
-                <label className="text-sm font-bold">Motivo<select name="reason" className="mt-2 w-full rounded-lg border bg-surface p-3">{["Reacción vasovagal", "Punción difícil", "Flujo insuficiente", "Otro"].map(x => <option key={x}>{x}</option>)}</select></label>
-                <Button variant="vivid">Cerrar sin sumar unidad</Button>
+              {interrupted && <form className="mt-4 space-y-4 border-t pt-4" onSubmit={e => {
+                e.preventDefault(); const d = new FormData(e.currentTarget);
+                const reason = resolveClinicalReason(interruptionReason, String(d.get("detail") ?? ""), DONATION_INTERRUPTION_REASONS);
+                if (!reason) return; setInterrupted(false); finishProcess("No realizada", `Donación no realizada · ${reason}`);
+              }}>
+                <label className="block text-sm font-bold">Motivo de donación no realizada<select name="reason" value={interruptionReason} onChange={e => setInterruptionReason(e.target.value)} className="mt-2 w-full rounded-lg border bg-surface p-3">{DONATION_INTERRUPTION_REASONS.map(x => <option key={x}>{x}</option>)}</select></label>
+                {interruptionReason === "Otro" && <label className="block text-sm font-bold">Especificar motivo<textarea name="detail" required maxLength={1000} rows={3} className="mt-2 w-full rounded-lg border bg-surface p-3" /></label>}
+                <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setInterrupted(false)}>Cancelar</Button><Button variant="vivid">Cerrar sin sumar unidad</Button></div>
               </form>}
+              <div className="mt-6 border-t pt-3"><Button variant="ghost" className="h-auto whitespace-normal text-left" onClick={() => goStep("evaluacion")}><ArrowLeft />Volver a evaluación clínica</Button></div>
             </div>}
             {processStep === "laboratorio" && record && <div className="mt-5">
               <h3 className="font-extrabold">Validación de laboratorio · aptitud de la sangre</h3>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <Button className="bg-chart-teal text-primary-foreground hover:bg-chart-teal/90" onClick={() => { saveOutcome(record.donorDoc, { kind: "apto" }); finishProcess("Exitosa", "Unidad aprobada / liberada · próximo recordatorio programado"); }}>🟢 Unidad aprobada / liberada</Button>
-                <Button variant="destructive" onClick={() => setRejected(true)}>🔴 Unidad rechazada / reactiva</Button>
+              <div className="mt-4 grid gap-3">
+                <Button className="h-auto min-h-12 justify-start whitespace-normal bg-chart-teal py-3 text-left text-primary-foreground hover:bg-chart-teal/90" disabled={rejected} onClick={() => { saveOutcome(record.donorDoc, { kind: "apto" }); finishProcess("Exitosa", "Unidad aprobada / liberada · próximo recordatorio programado"); }}><CheckCircle2 className="shrink-0" />Unidad aprobada / liberada</Button>
+                <Button variant="outline" className="h-auto min-h-12 justify-start whitespace-normal py-3 text-left" onClick={() => setRejected(true)}><AlertTriangle className="shrink-0 text-destructive" />Unidad rechazada</Button>
               </div>
-              {rejected && <form className="mt-4 rounded-lg border p-4" onSubmit={e => { e.preventDefault(); const st = String(new FormData(e.currentTarget).get("status")); setRejected(false); saveOutcome(record.donorDoc, st === "permanente" ? { kind: "permanente", reason: "Serología reactiva confirmada" } : { kind: "lab_rechazo" }); finishProcess("No exitosa", `Unidad rechazada · bolsa descartada/incinerada · ${st === "permanente" ? "no apto permanente" : "diferido para confirmación"}`); }}>
-                <p className="text-sm font-semibold">La bolsa se marcará como descartada/incinerada. Estatus confidencial del donante:</p>
-                <div className="mt-2 flex flex-wrap gap-4 text-sm font-bold"><label className="flex items-center gap-2"><input type="radio" name="status" value="temporal" defaultChecked />🟡 Diferido temporal para confirmación</label><label className="flex items-center gap-2"><input type="radio" name="status" value="permanente" />🔴 No apto permanente</label></div>
-                <Button className="mt-3" variant="vivid">Registrar rechazo</Button>
+              {rejected && <form className="mt-4 space-y-4 border-t pt-4" onSubmit={e => {
+                e.preventDefault(); const d = new FormData(e.currentTarget);
+                const reason = resolveClinicalReason(rejectionReason, String(d.get("detail") ?? ""), UNIT_REJECTION_REASONS);
+                if (!reason || (rejectionStatus === "permanente" && !d.get("confirmed"))) return;
+                setRejected(false);
+                saveOutcome(record.donorDoc, rejectionStatus === "permanente" ? { kind: "permanente", reason: "Consulta confidencial con el banco de sangre" } : { kind: "lab_rechazo" });
+                finishProcess("No exitosa", `Unidad rechazada · Motivo interno: ${reason} · ${rejectionStatus === "permanente" ? "no apto permanente confirmado" : "diferido temporal para confirmación"}`);
+              }}>
+                <label className="block text-sm font-bold">Motivo interno del rechazo<select name="reason" value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="mt-2 w-full rounded-lg border bg-surface p-3">{UNIT_REJECTION_REASONS.map(x => <option key={x}>{x}</option>)}</select></label>
+                {rejectionReason === "Otro" && <label className="block text-sm font-bold">Especificar motivo del rechazo<textarea name="detail" required maxLength={1000} rows={3} className="mt-2 w-full rounded-lg border bg-surface p-3" /></label>}
+                <fieldset><legend className="text-sm font-bold">Estado del donante</legend><div className="mt-3 space-y-3 text-sm font-semibold">
+                  <label className="flex items-start gap-2"><input className="mt-1" type="radio" name="status" value="temporal" checked={rejectionStatus === "temporal"} onChange={() => setRejectionStatus("temporal")} />🟡 Diferido temporal para confirmación</label>
+                  <label className="flex items-start gap-2"><input className="mt-1" type="radio" name="status" value="permanente" checked={rejectionStatus === "permanente"} onChange={() => setRejectionStatus("permanente")} />🔴 No apto permanente</label>
+                </div></fieldset>
+                {rejectionStatus === "permanente" && <label className="flex items-start gap-2 text-sm"><input type="checkbox" name="confirmed" required className="mt-1" />Decisión permanente confirmada por el profesional responsable, no basada únicamente en un resultado preliminar.</label>}
+                <p className="tint-gold rounded-md border p-3 text-sm">Citación confidencial: acércate al banco de sangre con tu DNI para entrega confidencial de resultados y orientación médica.</p>
+                <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setRejected(false)}>Cancelar</Button><Button variant="vivid">Registrar rechazo</Button></div>
               </form>}
-              <Button className="mt-4" variant="outline" onClick={() => goStep("donacion")}>Volver a donación</Button>
+              <div className="mt-6 border-t pt-3"><Button variant="ghost" onClick={() => goStep("donacion")}><ArrowLeft />Volver a donación</Button></div>
             </div>}
           </div>
           <aside className="rounded-lg border bg-card p-5"><h3 className="font-extrabold">Historial de donaciones</h3><p className="mt-1 text-sm text-muted-foreground">Consulta limitada al donante validado.</p>{processStep === "identify" ? <p className="mt-3 text-sm text-muted-foreground">Valida el código y DNI para consultar los antecedentes.</p> : donorHistoryDemo.map(x => <div key={x.date} className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="font-bold">{x.date} · {x.result}</p><p className="text-xs text-muted-foreground">{x.place} · Hb {x.hb} · {x.bp} · {x.pulse} ppm</p></div>)}</aside>
