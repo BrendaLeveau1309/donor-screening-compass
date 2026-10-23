@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CphAdmin } from "@/components/nexovital/cph-admin";
 import { LiquidRed } from "@/components/nexovital/liquid-red";
 import { daysUntil, loadOutcomes, saveOutcome, type Outcome } from "@/lib/donor-eligibility";
+import { supabase } from "@/integrations/supabase/client";
 import { CLINICAL_FIELDS, CLINICAL_STEPS, DEMO_DIGITAL_ANSWERS, DONATION_INTERRUPTION_REASONS, UNIT_REJECTION_REASONS, resolveClinicalReason, normalizeClinicalStep, PREDONATION_QUESTIONS, questionnaireReview, type ClinicalStep } from "@/lib/clinical-evaluation";
 
 export const Route = createFileRoute("/backoffice")({
