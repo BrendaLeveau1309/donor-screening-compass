@@ -16,6 +16,7 @@
 - [x] Proceso activo por etapas: identificación (código + DNI), tamizaje (Hb/presión/pulso), donación, validación final (resultado, aptitud, motivo, fechas) + historial del donante
 
 ## Pendiente
+- [ ] Unificar evaluación clínica y entrevista, retirar peso, mostrar cuestionario y permitir motivos libres con fin de exclusión opcional.
 - [x] Proceso clínico en 5 etapas (entrevista y laboratorio separados), mensajes bioéticos en tracking e insignia de aptitud en carnet
 - [ ] Añadir compatibilidad y rango al carnet y adaptar el acceso hospitalario a la referencia de Brenda.
 - [x] Reemplazar carnet de Cuenta con lectura del perfil y compartir/copiar; actualizar métricas de bienvenida y etapas del proceso (verificado en demo; la cuenta de prueba no tiene perfil disponible).

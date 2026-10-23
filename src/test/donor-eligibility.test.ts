@@ -8,4 +8,5 @@ describe("eligibility", () => {
   it("temporal deferral counts remaining days", () => expect(eligibility({ kind: "temporal", reason: "x", until: "2026-11-02" }, now)).toEqual({ status: "diferido", days: 10 }));
   it("expired temporal deferral is habilitado again", () => expect(eligibility({ kind: "temporal", reason: "x", until: "2026-10-01" }, now).status).toBe("habilitado"));
   it("permanent stays permanente", () => expect(eligibility({ kind: "permanente", reason: "x" }, now).status).toBe("permanente"));
+  it("temporal exclusion without an end date stays deferred", () => expect(eligibility({ kind: "temporal", reason: "Pendiente de reevaluación" }, now)).toEqual({ status: "diferido", days: 0 }));
 });
