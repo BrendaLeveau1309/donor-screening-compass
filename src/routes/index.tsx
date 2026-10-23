@@ -37,6 +37,32 @@ function useDonorOutcome() {
   return o;
 }
 
+type MatchRequest = { code: string; hospital: string; blood: string; urgency: string };
+/** Solicitud real compatible con el grupo sanguíneo del donante autenticado. */
+function useCompatibleRequest(enabled: boolean) {
+  const [req, setReq] = useState<MatchRequest | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: profile } = await supabase.from("profiles").select("blood_group, rh_factor").eq("id", session.user.id).maybeSingle();
+      if (!profile?.blood_group || !profile.rh_factor) return;
+      const { data } = await supabase.from("blood_requests")
+        .select("code, blood_group, rh_factor, urgency, health_establishments(name)")
+        .eq("status", "en_proceso").eq("blood_group", profile.blood_group).eq("rh_factor", profile.rh_factor)
+        .order("created_at", { ascending: false }).limit(1);
+      const r = data?.[0];
+      if (active && r) setReq({ code: r.code, hospital: (r.health_establishments as { name: string } | null)?.name ?? "Establecimiento de salud", blood: `${r.blood_group}${r.rh_factor}`, urgency: r.urgency });
+    })();
+    return () => { active = false; };
+  }, [enabled]);
+  return req;
+}
+
+const REQUEST_STATUS_LABEL: Record<string, string> = { en_proceso: "En proceso", atendida: "Atendida", cancelada: "Cancelada" };
+
 const donorHistory = [
   { date: "12 jun 2026", place: "Clínica Internacional", result: "CONCRETADA", hb: 13.8, bp: "120/80", pulse: 72 },
   { date: "03 ene 2026", place: "Hospital Rebagliati", result: "CONCRETADA", hb: 13.2, bp: "118/78", pulse: 70 },
