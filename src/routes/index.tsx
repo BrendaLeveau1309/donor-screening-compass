@@ -88,6 +88,9 @@ function NexoVitalApp() {
   const [searching, setSearching] = useState(false);
   const [searchDone, setSearchDone] = useState(false);
   const [searchCode, setSearchCode] = useState("");
+  const [foundRequest, setFoundRequest] = useState<{ code: string; status: string; blood: string; units: string; urgency: string } | null>(null);
+  const [searchMiss, setSearchMiss] = useState(false);
+  const matchRequest = useCompatibleRequest(authenticated && role === "donor");
   const [darkMode, setDarkMode] = useState(false);
   const searchTimer = useRef<number | null>(null);
 
@@ -138,10 +141,19 @@ function NexoVitalApp() {
     </PhoneFrame>
   );
 
-  const startSearch = () => {
+  const startSearch = async () => {
     if (!searchCode.trim()) return;
     setSearching(true);
-    searchTimer.current = window.setTimeout(() => { setSearching(false); setSearchDone(true); searchTimer.current = null; }, 2200);
+    setFoundRequest(null); setSearchMiss(false);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      searchTimer.current = window.setTimeout(() => { setSearching(false); setSearchDone(true); searchTimer.current = null; }, 2200);
+      return;
+    }
+    const { data } = await supabase.from("blood_requests").select("code, status, blood_group, rh_factor, units_required, units_fulfilled, urgency").ilike("code", searchCode.trim()).maybeSingle();
+    if (data) setFoundRequest({ code: data.code, status: REQUEST_STATUS_LABEL[data.status] ?? data.status, blood: `${data.blood_group}${data.rh_factor}`, units: `${data.units_fulfilled} / ${data.units_required}`, urgency: data.urgency });
+    else setSearchMiss(true);
+    setSearching(false); setSearchDone(true);
   };
 
   return (
