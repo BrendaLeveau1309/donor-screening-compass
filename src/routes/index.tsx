@@ -30,7 +30,7 @@ type View = "home" | "tracking" | "history" | "account";
 type AuthMode = "login" | "register" | "recover";
 type Role = "donor" | "requester";
 
-const timeline = ["Emparejamiento aceptado", "En camino", "En establecimiento", "Tamizaje y entrevista", "En donación", "Validación final"];
+const timeline = ["Emparejamiento aceptado", "En camino", "En establecimiento", "Evaluación clínica y entrevista", "En donación", "Validación final"];
 function useDonorOutcome() {
   const [o, setO] = useState<Outcome | undefined>();
   useEffect(() => { const f = () => setO(loadOutcomes()[DEMO_DONOR_DOC]); f(); window.addEventListener("storage", f); window.addEventListener("nexovital-outcome", f); return () => { window.removeEventListener("storage", f); window.removeEventListener("nexovital-outcome", f); }; }, []);
