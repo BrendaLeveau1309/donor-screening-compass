@@ -120,8 +120,8 @@ function Backoffice() {
   const [interrupted, setInterrupted] = useState(false);
   const [rejected, setRejected] = useState(false);
   const [priorOutcome, setPriorOutcome] = useState<Outcome | undefined>();
-  const [interruptionReason, setInterruptionReason] = useState(DONATION_INTERRUPTION_REASONS[0]);
-  const [rejectionReason, setRejectionReason] = useState(UNIT_REJECTION_REASONS[0]);
+  const [interruptionReason, setInterruptionReason] = useState<string>(DONATION_INTERRUPTION_REASONS[0]);
+  const [rejectionReason, setRejectionReason] = useState<string>(UNIT_REJECTION_REASONS[0]);
   const [rejectionStatus, setRejectionStatus] = useState("temporal");
   const [demoQuiz, setDemoQuiz] = useState(false);
   const [quiz, setQuiz] = useState<Record<string, unknown> | null>(null);
