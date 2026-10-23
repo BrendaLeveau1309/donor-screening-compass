@@ -107,12 +107,52 @@ function Backoffice() {
   const [record, setRecord] = useState<ProcessRecord | null>(null);
   const [editing, setEditing] = useState(false);
   const [processes, setProcesses] = useState<Record<string, ProcessRecord>>({});
+  const [staffUser, setStaffUser] = useState<{ id: string; establishmentId: string | null; isAdmin: boolean } | null>(null);
+  const [loginError, setLoginError] = useState("");
+  const [donationCtx, setDonationCtx] = useState<{ requestId: string; donorId: string; donationId: string | null } | null>(null);
   useEffect(() => {
     const refresh = () => setProcesses(loadProcesses());
     refresh();
     window.addEventListener("storage", refresh);
     return () => window.removeEventListener("storage", refresh);
   }, []);
+  // Con sesión institucional real, las solicitudes vienen de la base de datos compartida.
+  useEffect(() => {
+    if (!staffUser) return;
+    void (async () => {
+      const { data } = await supabase.from("blood_requests").select("*").order("created_at", { ascending: false });
+      if (data) setRequests(data.map(r => ({
+        code: r.code, patient: r.patient_name, patientDoc: r.patient_document, blood: r.blood_group, rh: r.rh_factor,
+        units: r.units_required, fulfilled: r.units_fulfilled, urgency: r.urgency,
+        status: r.status === "en_proceso" ? "En proceso" as const : r.status === "atendida" ? "Atendida" as const : "Cancelada" as const,
+        created: new Date(r.created_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }),
+        closed: r.closed_at ? new Date(r.closed_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }) : null,
+        donations: [],
+      })));
+    })();
+  }, [staffUser]);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginError("");
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "");
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { setLoginError("Credenciales incorrectas o cuenta sin confirmar."); return; }
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+    if (!uid) { setLoginError("No pudimos verificar tu sesión."); return; }
+    const [{ data: isStaff }, { data: isAdmin }] = await Promise.all([
+      supabase.rpc("has_role", { _user_id: uid, _role: "hospital_staff" }),
+      supabase.rpc("has_role", { _user_id: uid, _role: "admin" }),
+    ]);
+    if (!isStaff && !isAdmin) { setLoginError("Tu cuenta no tiene acceso institucional."); await supabase.auth.signOut(); return; }
+    const { data: profile } = await supabase.from("profiles").select("establishment_id").eq("id", uid).maybeSingle();
+    setStaffUser({ id: uid, establishmentId: profile?.establishment_id ?? null, isAdmin: !!isAdmin });
+    setRole(isAdmin ? "admin" : "hospital");
+    setEntered(true); setNotice("");
+  };
   const persistProcesses = (all: Record<string, ProcessRecord>) => { saveProcesses(all); setProcesses(all); };
   const activeProcesses = Object.values(processes).filter(p => requests.some(r => r.code === p.code && r.status === "En proceso"));
   const donationUsers = new Set(activeProcesses.filter(p => p.step === "donacion").map(p => p.donorDoc)).size;
