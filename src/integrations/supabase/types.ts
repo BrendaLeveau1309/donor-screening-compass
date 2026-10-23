@@ -284,6 +284,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      set_donor_fitness: {
+        Args: { _donor_id: string; _fitness: string }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "hospital_staff" | "user"

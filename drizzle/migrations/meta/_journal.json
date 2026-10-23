@@ -8,6 +8,13 @@
       "when": 1792723406435,
       "tag": "0000_profile_metadata_and_seed_establishments",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792723497873,
+      "tag": "0001_staff_set_donor_fitness",
+      "breakpoints": true
     }
   ]
 }
