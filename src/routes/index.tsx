@@ -185,11 +185,11 @@ function NexoVitalApp() {
                {showMatch && secondsLeft > 0 && (
                 <section className="glass-panel absolute inset-x-3 bottom-24 z-20 overflow-hidden rounded-lg border border-border p-4 border-t-4 border-t-chart-teal">
                   <div className="flex items-start justify-between gap-3">
-                    <div><p className="text-[10px] font-extrabold uppercase text-chart-teal">Solicitud compatible · NV-28491</p><h2 className="mt-1 text-base font-extrabold">Hospital Dos de Mayo</h2></div>
+                    <div><p className="text-[10px] font-extrabold uppercase text-chart-teal">Solicitud compatible · {matchRequest?.code ?? "NV-28491"}</p><h2 className="mt-1 text-base font-extrabold">{matchRequest?.hospital ?? "Hospital Dos de Mayo"}</h2></div>
                      <span role="timer" aria-label={`Tiempo restante: ${secondsLeft} segundos`} className="flex items-center gap-1 rounded-full bg-secondary px-3 py-1.5 text-xs font-extrabold"><Clock3 className="size-3.5" />00:{String(secondsLeft).padStart(2, "0")}</span>
                   </div>
                   <div className="my-3 grid grid-cols-3 gap-2 text-center text-xs">
-                    <Info label="Distancia" value="2.4 km" /><Info label="Requiere" value="O+" /><Info label="Urgencia" value="Alta" urgent />
+                    <Info label="Distancia" value="2.4 km" /><Info label="Requiere" value={matchRequest?.blood ?? "O+"} /><Info label="Urgencia" value={matchRequest?.urgency ?? "Alta"} urgent />
                    </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant="outline" size="lg" onClick={() => setShowMatch(false)}>Rechazar</Button>
@@ -231,7 +231,7 @@ function NexoVitalApp() {
         </div>
         <Button className="w-full" variant="outline" onClick={cancelSearch}>Cancelar búsqueda</Button>
       </Modal>}
-      {searchDone && <Modal title="Búsqueda finalizada" onClose={() => setSearchDone(false)}><p className="mb-4 text-sm text-muted-foreground">Encontramos donantes compatibles para la solicitud {searchCode.toUpperCase()}. Puedes seguir el avance de cada donación.</p><Button className="w-full" variant="vivid" size="lg" onClick={() => { setSearchDone(false); setView("tracking"); }}>Ver seguimiento</Button></Modal>}
+      {searchDone && <Modal title="Búsqueda finalizada" onClose={() => setSearchDone(false)}>{foundRequest ? <div className="mb-4"><p className="text-sm text-muted-foreground">Solicitud encontrada en la red NexoVital.</p><div className="mt-3 rounded-md border bg-card p-4 text-sm"><p className="font-extrabold">{foundRequest.code} · {foundRequest.blood}</p><p className="mt-1 text-muted-foreground">{foundRequest.units} unidades · Urgencia {foundRequest.urgency}</p><p className="mt-1 font-bold text-primary">{foundRequest.status}</p></div></div> : searchMiss ? <p className="mb-4 text-sm text-muted-foreground">No encontramos una solicitud con el código {searchCode.toUpperCase()}. Verifica el código entregado por el hospital.</p> : <p className="mb-4 text-sm text-muted-foreground">Encontramos donantes compatibles para la solicitud {searchCode.toUpperCase()}. Puedes seguir el avance de cada donación.</p>}<Button className="w-full" variant="vivid" size="lg" onClick={() => { setSearchDone(false); setView("tracking"); }}>Ver seguimiento</Button></Modal>}
       {menuOpen && <SideMenu role={role} onRoleChange={changeRole} darkMode={darkMode} onToggleTheme={toggleTheme} onClose={() => { setMenuOpen(false); setMenuPanel(null); }} onLogout={() => { void supabase.auth.signOut(); setAuthenticated(false); }} onOpen={p => { if (p === "cph") setMenuOpen(false); setMenuPanel(p); }} />}
       {menuPanel === "cph" && <CphView onBack={() => setMenuPanel(null)} />}
       {menuPanel === "notifications" && <Modal title="Gestionar notificaciones" onClose={() => setMenuPanel(null)}><NotificationToggles /></Modal>}
