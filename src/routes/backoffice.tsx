@@ -310,13 +310,42 @@ function Backoffice() {
     if (!record) return;
     const next = { ...record, ...patch, updatedBy: "Valeria M." };
     const all = loadProcesses(); all[`${next.code}|${next.donorDoc}`] = next; persistProcesses(all); setRecord(next);
+    // Persiste los signos vitales de la evaluación clínica en la donación real.
+    if (donationCtx?.donationId && (patch.hb !== undefined || patch.bp !== undefined || patch.pulse !== undefined)) {
+      void supabase.from("donations").update({
+        hemoglobin: patch.hb ? Number(patch.hb) : null,
+        blood_pressure: patch.bp ?? null,
+        pulse: patch.pulse ? Number(patch.pulse) : null,
+        status: "en_tamizaje",
+      }).eq("id", donationCtx.donationId);
+    }
   };
-  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => { setEditing(false); setDeferral(null); setInterrupted(false); setRejected(false); setProcessStep(step); if (record) updateRecord({ ...patch, step }); };
+  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => {
+    setEditing(false); setDeferral(null); setInterrupted(false); setRejected(false); setProcessStep(step);
+    if (record) updateRecord({ ...patch, step });
+    if (step === "laboratorio" && patch.donation === "realizada" && donationCtx?.donationId) {
+      void supabase.from("donations").update({ status: "donacion_realizada" }).eq("id", donationCtx.donationId);
+    }
+  };
   const finishProcess = (status: string, result: string) => {
     if (!record) return;
     const ok = status === "Exitosa";
     setRequests(rs => rs.map(r => r.code === record.code ? { ...r, fulfilled: ok ? Math.min(r.units, r.fulfilled + 1) : r.fulfilled, donations: [...r.donations, { alias: `Donante ${record.donorDoc}`, status, result }] } : r));
     const all = loadProcesses(); delete all[`${record.code}|${record.donorDoc}`]; persistProcesses(all);
+    // Cierra la donación real: estado, aptitud del donante y unidades de la solicitud.
+    if (donationCtx) {
+      const ctx = donationCtx;
+      const fitness = ok ? "apto" : status === "Diferido temporal" ? "no_apto_temporal" : status === "No apto permanente" ? "no_apto_permanente" : status === "No exitosa" ? "pendiente_confirmacion" : "pendiente";
+      void (async () => {
+        if (ctx.donationId) await supabase.from("donations").update({ status: ok ? "exitosa" : "no_concretada", fitness, fitness_reason: result, completed_at: new Date().toISOString() }).eq("id", ctx.donationId);
+        await supabase.rpc("set_donor_fitness", { _donor_id: ctx.donorId, _fitness: fitness });
+        if (ok) {
+          const { data: reqRow } = await supabase.from("blood_requests").select("units_fulfilled, units_required").eq("id", ctx.requestId).single();
+          if (reqRow) await supabase.from("blood_requests").update({ units_fulfilled: Math.min(reqRow.units_required, reqRow.units_fulfilled + 1) }).eq("id", ctx.requestId);
+        }
+      })();
+    }
+    setDonationCtx(null);
     setRecord(null); setProcessStep("identify"); setNotice(`Proceso cerrado: ${result}. Se registró en el historial de la solicitud.`);
   };
 
