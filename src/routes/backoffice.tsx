@@ -220,11 +220,10 @@ function Backoffice() {
             <label className="mt-8 block text-sm font-bold">Correo institucional<div className={`${field} mt-2`}><User className="size-5 text-muted-foreground" /><input type="email" required className="w-full bg-transparent py-3.5 outline-none" placeholder="nombre@hospital.pe" /></div></label>
             <Button className="mt-6 h-14 w-full text-base" variant="vivid">Enviar instrucciones</Button>
             <Button type="button" className="mt-2 w-full" variant="ghost" onClick={() => { setRecover(false); setNotice(""); }}>Volver</Button>
-          </form> : <form onSubmit={event => { event.preventDefault(); setEntered(true); setNotice(""); }}>
+          </form> : <form onSubmit={submitLogin}>
             <h2 className="text-4xl font-extrabold">Bienvenido</h2>
             <p className="mt-2 text-lg text-muted-foreground">Inicia sesión en la plataforma NexoVital</p>
-            <label className="mt-8 block text-sm font-bold">Tipo de documento<div className={`${field} mt-2`}><FileText className="size-5 text-muted-foreground" /><select className="w-full bg-transparent py-3.5 font-normal outline-none"><option>DNI</option><option>Carné de extranjería</option><option>Pasaporte</option></select></div></label>
-            <label className="mt-5 block text-sm font-bold">Número de documento<div className={`${field} mt-2`}><User className="size-5 text-muted-foreground" /><input required inputMode="numeric" className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="Ingresa tu número de documento" /></div></label>
+            <label className="mt-8 block text-sm font-bold">Correo institucional<div className={`${field} mt-2`}><FileText className="size-5 text-muted-foreground" /><input name="email" type="email" required className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="nombre@hospital.pe" /></div></label>
             <label className="mt-5 block text-sm font-bold">Contraseña<div className={`${field} mt-2`}><Lock className="size-5 text-muted-foreground" /><input required type={showPw ? "text" : "password"} className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="••••••" /><Button type="button" size="icon" variant="ghost" aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"} onClick={() => setShowPw(!showPw)}>{showPw ? <EyeOff /> : <Eye />}</Button></div></label>
             <Button type="button" variant="link" className="mt-3 px-0" onClick={() => setRecover(true)}>¿Olvidaste tu contraseña?</Button>
             <Button className="mt-4 h-14 w-full text-base" variant="vivid">Iniciar sesión <ArrowRight /></Button>
