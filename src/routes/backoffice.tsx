@@ -5,6 +5,7 @@ import { NexoLogo } from "@/components/nexovital/logo";
 import { Button } from "@/components/ui/button";
 import { CphAdmin } from "@/components/nexovital/cph-admin";
 import { LiquidRed } from "@/components/nexovital/liquid-red";
+import { daysUntil, loadOutcomes, saveOutcome, type Outcome } from "@/lib/donor-eligibility";
 
 export const Route = createFileRoute("/backoffice")({
   head: () => ({ meta: [
@@ -65,10 +66,10 @@ const seedRequests: (Request & { createdAt: number })[] = [
 // Regla: una solicitud solo tiene vigencia de un día; vencida pasa a Cancelada.
 const initialRequests: Request[] = seedRequests.map(({ createdAt, ...r }) => r.status === "En proceso" && Date.now() - createdAt > DAY ? { ...r, status: "Cancelada", closed: "Vencida (24 h)" } : r);
 
-type Step = "identify" | "tamizaje" | "donacion" | "validacion";
-const STEPS: [Step, string][] = [["identify", "Identificación"], ["tamizaje", "Tamizaje"], ["donacion", "Donación"], ["validacion", "Validación final"]];
+type Step = "identify" | "tamizaje" | "entrevista" | "donacion" | "laboratorio";
+const STEPS: [Step, string][] = [["identify", "Identificación"], ["tamizaje", "Tamizaje físico"], ["entrevista", "Entrevista médica"], ["donacion", "Donación"], ["laboratorio", "Validación de laboratorio"]];
 const stepIndex = (s: Step) => STEPS.findIndex(([id]) => id === s);
-type ProcessRecord = { code: string; donorDoc: string; step: Step; hb?: string; bp?: string; pulse?: string; donation?: string; updatedBy?: string };
+type ProcessRecord = { code: string; donorDoc: string; step: Step; hb?: string; bp?: string; pulse?: string; weight?: string; temp?: string; paperForm?: boolean; fitness?: string; donation?: string; updatedBy?: string };
 const PROCESS_KEY = "nexovital-hospital-processes";
 const loadProcesses = (): Record<string, ProcessRecord> => { try { return JSON.parse(localStorage.getItem(PROCESS_KEY) ?? "{}"); } catch { return {}; } };
 const saveProcesses = (v: Record<string, ProcessRecord>) => localStorage.setItem(PROCESS_KEY, JSON.stringify(v));
@@ -110,7 +111,12 @@ function Backoffice() {
   const persistProcesses = (all: Record<string, ProcessRecord>) => { saveProcesses(all); setProcesses(all); };
   const activeProcesses = Object.values(processes).filter(p => requests.some(r => r.code === p.code && r.status === "En proceso"));
   const donationUsers = new Set(activeProcesses.filter(p => p.step === "donacion").map(p => p.donorDoc)).size;
-  const validationUsers = new Set(activeProcesses.filter(p => p.step === "validacion").map(p => p.donorDoc)).size;
+  const validationUsers = new Set(activeProcesses.filter(p => p.step === "laboratorio").map(p => p.donorDoc)).size;
+  const [deferral, setDeferral] = useState<null | "temporal" | "permanente">(null);
+  const [interrupted, setInterrupted] = useState(false);
+  const [rejected, setRejected] = useState(false);
+  const [priorOutcome, setPriorOutcome] = useState<Outcome | undefined>();
+  const [quiz, setQuiz] = useState<Record<string, unknown> | null>(null);
 
   const open = (kind: DialogKind) => { setNotice(""); setDialog(kind); };
   const navigate = (next: Section) => { setSection(next); setNotice(""); setQuery(""); setSearch(""); setDetail(null); };
@@ -206,6 +212,7 @@ function Backoffice() {
     const existing = all[`${code}|${doc}`] ?? { code, donorDoc: doc, step: "tamizaje" as Step };
     all[`${code}|${doc}`] = existing; persistProcesses(all);
     setRecord(existing); setEditing(false); setProcessError(""); setProcessStep(existing.step);
+    setPriorOutcome(loadOutcomes()[doc]); try { setQuiz(JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null")); } catch { setQuiz(null); }
   };
   const updateRecord = (patch: Partial<ProcessRecord>) => {
     if (!record) return;
@@ -278,40 +285,62 @@ function Backoffice() {
           <div className="rounded-lg border bg-card p-5">
             <ol className="flex flex-wrap gap-2 text-xs font-extrabold">{STEPS.map(([id, label], i) => <li key={id} className={`rounded-full px-3 py-1.5 ${processStep === id ? "bg-primary text-primary-foreground" : stepIndex(id) < stepIndex(processStep) ? "bg-chart-teal text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{i + 1}. {label}</li>)}</ol>
             {record && processStep !== "identify" && <p className="mt-4 rounded-lg bg-accent p-3 text-xs font-semibold text-accent-foreground">Proceso {record.code} · {record.donorDoc}{record.updatedBy ? ` · Último registro: ${record.updatedBy}` : ""}. Cualquier personal del hospital puede continuar desde aquí.</p>}
+            {record && processStep !== "identify" && priorOutcome && priorOutcome.kind !== "apto" && <p role="alert" className={`mt-3 rounded-lg border p-3 text-sm font-bold ${priorOutcome.kind === "permanente" ? "border-destructive/50 bg-destructive/10 text-destructive" : "tint-gold border-chart-gold/50"}`}>{priorOutcome.kind === "permanente" ? `🔴 Antecedente: NO APTO PERMANENTE · ${priorOutcome.reason}` : priorOutcome.kind === "temporal" ? (daysUntil(priorOutcome.until) > 0 ? `🟡 En periodo de ventana hasta ${priorOutcome.until} · ${priorOutcome.reason}` : `🟡 Antecedente temporal (${priorOutcome.reason}) ya cumplido el ${priorOutcome.until}`) : "🟡 Pendiente de consejería confidencial por unidad rechazada"}</p>}
             {processStep === "identify" && <form className="mt-5" onSubmit={identifyProcess}>
               <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-bold">Código de solicitud<input name="code" required className="mt-2 w-full rounded-lg border p-3" placeholder="NV-28491" /></label><label className="text-sm font-bold">DNI del donante<input name="donorDoc" required className="mt-2 w-full rounded-lg border p-3" placeholder="Documento del donante" /></label></div>
               <Button className="mt-5" variant="vivid">Validar proceso activo</Button>
               {processError && <p role="alert" className="mt-3 rounded-lg bg-muted p-3 text-sm font-semibold">{processError}</p>}
             </form>}
-            {processStep === "tamizaje" && record && <form key={`t-${editing}`} className="mt-5" onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); updateRecord({ hb: String(d.get("hb")), bp: String(d.get("bp")), pulse: String(d.get("pulse")) }); setEditing(false); }}>
-              <h3 className="font-extrabold">Tamizaje</h3>
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">{([["hb", "Hemoglobina (g/dL)"], ["bp", "Presión arterial"], ["pulse", "Pulso (ppm)"]] as const).map(([k, x]) => <label key={k} className="text-sm font-bold">{x}<input name={k} required readOnly={!!record.hb && !editing} defaultValue={record[k] ?? ""} className="mt-2 w-full rounded-lg border p-3 read-only:bg-muted" placeholder="Registrar" /></label>)}</div>
+            {processStep === "tamizaje" && record && <form key={`t-${editing}`} className="mt-5" onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); updateRecord({ pulse: String(d.get("pulse")), bp: String(d.get("bp")), weight: String(d.get("weight")), temp: String(d.get("temp")), hb: String(d.get("hb")) }); setEditing(false); }}>
+              <h3 className="font-extrabold">Tamizaje físico</h3><p className="mt-1 text-sm text-muted-foreground">Registro exclusivo de signos vitales.</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">{([["pulse", "Latidos del corazón (ppm)"], ["bp", "Presión arterial"], ["weight", "Peso (kg)"], ["temp", "Temperatura (°C)"], ["hb", "Hemoglobina (g/dL)"]] as const).map(([k, x]) => <label key={k} className="text-sm font-bold">{x}<input name={k} required readOnly={!!record.hb && !editing} defaultValue={record[k] ?? ""} className="mt-2 w-full rounded-lg border p-3 read-only:bg-muted" placeholder="Registrar" /></label>)}</div>
               <div className="mt-5 flex flex-wrap gap-2">
                 {(!record.hb || editing) && <Button variant="vivid">Guardar</Button>}
                 {record.hb && !editing && <Button type="button" variant="outline" onClick={() => setEditing(true)}>Editar</Button>}
-                {record.hb && !editing && <Button type="button" variant="vivid" onClick={() => goStep("donacion")}>Continuar a donación</Button>}
+                {record.hb && !editing && <Button type="button" variant="vivid" onClick={() => goStep("entrevista")}>Continuar a entrevista</Button>}
               </div>
             </form>}
-            {processStep === "donacion" && record && <div className="mt-5">
-              <h3 className="font-extrabold">Donación</h3>
-              <p className="mt-2 text-sm text-muted-foreground">Indica si la extracción se realizó según protocolo.</p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => goStep("tamizaje")}>Volver a tamizaje</Button>
-                <Button variant="vivid" onClick={() => { updateRecord({ donation: "realizada" }); goStep("validacion"); }}>Donación realizada</Button>
-                <Button variant="destructive" onClick={() => finishProcess("No realizada", "Donación no realizada")}>Donación no realizada</Button>
+            {processStep === "entrevista" && record && <div className="mt-5">
+              <h3 className="font-extrabold">Entrevista médica y autoexclusión</h3>
+              {quiz ? <div className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="font-bold">Cuestionario predonación digital (llenado en la app)</p><ul className="mt-2 space-y-1 text-xs">{Object.entries(quiz).map(([q, a]) => <li key={q}><span className="text-muted-foreground">Pregunta {Number(q) + 1}:</span> <b>{String(a)}</b></li>)}</ul></div> : <div className="mt-3 rounded-lg bg-muted p-3 text-sm"><p>El donante no llenó el cuestionario digital.</p><Button size="sm" variant={record.paperForm ? "default" : "outline"} className="mt-2" onClick={() => updateRecord({ paperForm: true })}>{record.paperForm ? "✓ Llenado en formulario físico (papel)" : "Llenado en formulario físico (papel)"}</Button></div>}
+              <p className="mt-5 text-xs font-extrabold uppercase text-muted-foreground">Semáforo de aptitud inmediata · antes de la punción</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <Button className="bg-chart-teal text-primary-foreground hover:bg-chart-teal/90" onClick={() => { updateRecord({ fitness: "APTO" }); goStep("donacion"); }}>🟢 APTO</Button>
+                <Button variant="outline" onClick={() => setDeferral("temporal")}>🟡 NO APTO TEMPORAL</Button>
+                <Button variant="destructive" onClick={() => setDeferral("permanente")}>🔴 NO APTO PERMANENTE</Button>
               </div>
+              {deferral && <form className="mt-4 grid gap-3 rounded-lg border p-4 sm:grid-cols-2" onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); const reason = String(d.get("reason")); if (deferral === "temporal") { const until = String(d.get("until")); saveOutcome(record.donorDoc, { kind: "temporal", reason, until }); finishProcess("Diferido temporal", `No apto temporal · ${reason} · hasta ${until}`); } else { saveOutcome(record.donorDoc, { kind: "permanente", reason }); finishProcess("No apto permanente", `No apto permanente · ${reason}`); } setDeferral(null); }}>
+                <label className="text-sm font-bold">Motivo{deferral === "temporal" ? <select name="reason" className="mt-2 w-full rounded-lg border bg-surface p-3">{["Hemoglobina baja", "Tatuaje reciente", "Antibióticos", "Presión fuera de rango", "Otro"].map(x => <option key={x}>{x}</option>)}</select> : <input name="reason" required className="mt-2 w-full rounded-lg border p-3" placeholder="Motivo médico" />}</label>
+                {deferral === "temporal" && <label className="text-sm font-bold">Fin de exclusión<input name="until" type="date" required className="mt-2 w-full rounded-lg border p-3" /></label>}
+                <div className="flex gap-2 sm:col-span-2"><Button type="button" variant="outline" onClick={() => setDeferral(null)}>Cancelar</Button><Button variant="vivid">Cerrar proceso sin extracción</Button></div>
+              </form>}
             </div>}
-            {processStep === "validacion" && record && <form className="mt-5" onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); const ok = d.get("result") === "Donación exitosa"; finishProcess(ok ? "Exitosa" : "No exitosa", `${d.get("result")} · ${d.get("fitness")}`); }}>
-              <h3 className="font-extrabold">Validación final</h3>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="text-sm font-bold">Resultado<select name="result" className="mt-2 w-full rounded-lg border bg-surface p-3"><option>Donación exitosa</option><option>Donación no exitosa</option></select></label>
-                <label className="text-sm font-bold">Aptitud del donante<select name="fitness" className="mt-2 w-full rounded-lg border bg-surface p-3"><option>APTO</option><option>NO APTO TEMPORALMENTE</option><option>NO APTO PERMANENTEMENTE</option></select></label>
-                <label className="text-sm font-bold sm:col-span-2">Motivo<input className="mt-2 w-full rounded-lg border p-3" placeholder="Opcional si la donación fue exitosa" /></label>
-                <label className="text-sm font-bold">Fecha inicio<input type="date" className="mt-2 w-full rounded-lg border p-3" /></label>
-                <label className="text-sm font-bold">Fecha fin<input type="date" className="mt-2 w-full rounded-lg border p-3" /></label>
+            {processStep === "donacion" && record && <div className="mt-5">
+              <h3 className="font-extrabold">Donación (sillón / extracción)</h3>
+              <p className="mt-2 text-sm text-muted-foreground">Registra solo el evento físico de flebotomía.</p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => goStep("entrevista")}>Volver a entrevista</Button>
+                <Button variant="vivid" onClick={() => { updateRecord({ donation: "realizada" }); goStep("laboratorio"); }}>Donación realizada</Button>
+                <Button variant="destructive" onClick={() => setInterrupted(true)}>Donación no realizada / interrumpida</Button>
               </div>
-              <div className="mt-5 flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => goStep("donacion")}>Editar donación</Button><Button variant="vivid">Registrar validación</Button></div>
-            </form>}
+              {interrupted && <form className="mt-4 flex flex-wrap items-end gap-2 rounded-lg border p-4" onSubmit={e => { e.preventDefault(); const reason = String(new FormData(e.currentTarget).get("reason")); setInterrupted(false); finishProcess("No realizada", `Donación no realizada · ${reason}`); }}>
+                <label className="text-sm font-bold">Motivo<select name="reason" className="mt-2 w-full rounded-lg border bg-surface p-3">{["Reacción vasovagal", "Punción difícil", "Flujo insuficiente", "Otro"].map(x => <option key={x}>{x}</option>)}</select></label>
+                <Button variant="vivid">Cerrar sin sumar unidad</Button>
+              </form>}
+            </div>}
+            {processStep === "laboratorio" && record && <div className="mt-5">
+              <h3 className="font-extrabold">Validación de laboratorio · aptitud de la sangre</h3>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Button className="bg-chart-teal text-primary-foreground hover:bg-chart-teal/90" onClick={() => { saveOutcome(record.donorDoc, { kind: "apto" }); finishProcess("Exitosa", "Unidad aprobada / liberada · próximo recordatorio programado"); }}>🟢 Unidad aprobada / liberada</Button>
+                <Button variant="destructive" onClick={() => setRejected(true)}>🔴 Unidad rechazada / reactiva</Button>
+              </div>
+              {rejected && <form className="mt-4 rounded-lg border p-4" onSubmit={e => { e.preventDefault(); const st = String(new FormData(e.currentTarget).get("status")); setRejected(false); saveOutcome(record.donorDoc, st === "permanente" ? { kind: "permanente", reason: "Serología reactiva confirmada" } : { kind: "lab_rechazo" }); finishProcess("No exitosa", `Unidad rechazada · bolsa descartada/incinerada · ${st === "permanente" ? "no apto permanente" : "diferido para confirmación"}`); }}>
+                <p className="text-sm font-semibold">La bolsa se marcará como descartada/incinerada. Estatus confidencial del donante:</p>
+                <div className="mt-2 flex flex-wrap gap-4 text-sm font-bold"><label className="flex items-center gap-2"><input type="radio" name="status" value="temporal" defaultChecked />🟡 Diferido temporal para confirmación</label><label className="flex items-center gap-2"><input type="radio" name="status" value="permanente" />🔴 No apto permanente</label></div>
+                <Button className="mt-3" variant="vivid">Registrar rechazo</Button>
+              </form>}
+              <Button className="mt-4" variant="outline" onClick={() => goStep("donacion")}>Volver a donación</Button>
+            </div>}
           </div>
           <aside className="rounded-lg border bg-card p-5"><h3 className="font-extrabold">Historial de donaciones</h3><p className="mt-1 text-sm text-muted-foreground">Consulta limitada al donante validado.</p>{processStep === "identify" ? <p className="mt-3 text-sm text-muted-foreground">Valida el código y DNI para consultar los antecedentes.</p> : donorHistoryDemo.map(x => <div key={x.date} className="mt-3 rounded-lg bg-muted p-3 text-sm"><p className="font-bold">{x.date} · {x.result}</p><p className="text-xs text-muted-foreground">{x.place} · Hb {x.hb} · {x.bp} · {x.pulse} ppm</p></div>)}</aside>
         </div>
