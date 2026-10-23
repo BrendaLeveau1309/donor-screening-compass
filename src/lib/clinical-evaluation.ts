@@ -29,3 +29,13 @@ export function questionnaireReview(answers: Record<string, unknown>) {
   const alerts = PREDONATION_QUESTIONS.flatMap((question, i) => answers[i] === (i < 3 ? "No" : "Sí") ? [{ question, answer: String(answers[i]) }] : []);
   return { complete, alerts };
 }
+
+export const DEMO_DIGITAL_ANSWERS: Record<string, string> = Object.fromEntries(
+  PREDONATION_QUESTIONS.map((_, i) => [String(i), i < 3 ? "Sí" : "No"]),
+);
+export const DONATION_INTERRUPTION_REASONS = ["Reacción vasovagal", "Punción difícil", "Flujo insuficiente", "Decisión del donante", "Otro"];
+export const UNIT_REJECTION_REASONS = ["Reactividad serológica preliminar", "Hemólisis / lipemia", "Contaminación / coágulo", "Volumen insuficiente", "Otro"];
+export function resolveClinicalReason(selection: string, detail: string, options: string[]): string | null {
+  if (!options.includes(selection)) return null;
+  return selection === "Otro" ? detail.trim() || null : selection;
+}
