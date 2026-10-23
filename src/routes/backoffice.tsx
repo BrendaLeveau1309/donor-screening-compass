@@ -171,7 +171,7 @@ function Backoffice() {
   const navigate = (next: Section) => { setSection(next); setNotice(""); setQuery(""); setSearch(""); setDetail(null); };
   const toggleRole = () => { setRole(role === "admin" ? "hospital" : "admin"); navigate("dashboard"); };
 
-  const save = (event: FormEvent<HTMLFormElement>) => {
+  const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
@@ -182,11 +182,33 @@ function Backoffice() {
       if (!patientName || !requesterName) { setNotice("Escribe el nombre y apellido de cada DNI."); return; }
       const code = `NV-${Math.floor(10000 + Math.random() * 90000)}`;
       const blood = String(data.get("blood") ?? "O");
-      setRequests(current => [{
-        code, patient: patientName, patientDoc: `DNI ${patientDni}`, requesterDoc: `DNI ${requesterDni}`, requesterName, originHospital: String(data.get("origin") ?? "").trim(), blood: blood.replace(/[+-]/, ""), rh: blood.includes("-") ? "-" : "+",
-        units: Number(data.get("units") ?? 1), fulfilled: 0, urgency: String(data.get("urgency") ?? "Media"),
-        status: "En proceso", created: "hoy", closed: null, donations: [],
-      }, ...current]);
+      const bloodGroup = blood.replace(/[+-]/, "");
+      const rh = blood.includes("-") ? "-" : "+";
+      const units = Number(data.get("units") ?? 1);
+      const urgency = String(data.get("urgency") ?? "Media");
+      if (staffUser) {
+        if (!staffUser.establishmentId) { setNotice("Tu cuenta no tiene un establecimiento asignado. Pide al administrador que lo vincule."); return; }
+        const { error } = await supabase.from("blood_requests").insert({
+          code, establishment_id: staffUser.establishmentId, patient_name: patientName, patient_document: `DNI ${patientDni}`,
+          blood_group: bloodGroup, rh_factor: rh, units_required: units, urgency,
+        });
+        if (error) { setNotice("No pudimos registrar la solicitud en la red. Inténtalo de nuevo."); return; }
+        const { data: rows } = await supabase.from("blood_requests").select("*").order("created_at", { ascending: false });
+        if (rows) setRequests(rows.map(r => ({
+          code: r.code, patient: r.patient_name, patientDoc: r.patient_document, blood: r.blood_group, rh: r.rh_factor,
+          units: r.units_required, fulfilled: r.units_fulfilled, urgency: r.urgency,
+          status: r.status === "en_proceso" ? "En proceso" as const : r.status === "atendida" ? "Atendida" as const : "Cancelada" as const,
+          created: new Date(r.created_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }),
+          closed: r.closed_at ? new Date(r.closed_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }) : null,
+          donations: [],
+        })));
+      } else {
+        setRequests(current => [{
+          code, patient: patientName, patientDoc: `DNI ${patientDni}`, requesterDoc: `DNI ${requesterDni}`, requesterName, originHospital: String(data.get("origin") ?? "").trim(), blood: bloodGroup, rh,
+          units, fulfilled: 0, urgency,
+          status: "En proceso", created: "hoy", closed: null, donations: [],
+        }, ...current]);
+      }
       setDialog(null); setNewCode(code); navigate("requests");
       return;
     }
