@@ -132,6 +132,26 @@ function Backoffice() {
     })();
   }, [staffUser]);
 
+  const enterWithSession = async (uid: string): Promise<boolean> => {
+    const [{ data: isStaff }, { data: isAdmin }] = await Promise.all([
+      supabase.rpc("has_role", { _user_id: uid, _role: "hospital_staff" }),
+      supabase.rpc("has_role", { _user_id: uid, _role: "admin" }),
+    ]);
+    if (!isStaff && !isAdmin) return false;
+    const { data: profile } = await supabase.from("profiles").select("establishment_id").eq("id", uid).maybeSingle();
+    setStaffUser({ id: uid, establishmentId: profile?.establishment_id ?? null, isAdmin: !!isAdmin });
+    setRole(isAdmin ? "admin" : "hospital");
+    setEntered(true); setNotice("");
+    return true;
+  };
+  // Sesión institucional persistente: entra directo si ya inició sesión.
+  useEffect(() => {
+    void supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session) await enterWithSession(data.session.user.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoginError("");
@@ -143,15 +163,7 @@ function Backoffice() {
     const { data: userData } = await supabase.auth.getUser();
     const uid = userData.user?.id;
     if (!uid) { setLoginError("No pudimos verificar tu sesión."); return; }
-    const [{ data: isStaff }, { data: isAdmin }] = await Promise.all([
-      supabase.rpc("has_role", { _user_id: uid, _role: "hospital_staff" }),
-      supabase.rpc("has_role", { _user_id: uid, _role: "admin" }),
-    ]);
-    if (!isStaff && !isAdmin) { setLoginError("Tu cuenta no tiene acceso institucional."); await supabase.auth.signOut(); return; }
-    const { data: profile } = await supabase.from("profiles").select("establishment_id").eq("id", uid).maybeSingle();
-    setStaffUser({ id: uid, establishmentId: profile?.establishment_id ?? null, isAdmin: !!isAdmin });
-    setRole(isAdmin ? "admin" : "hospital");
-    setEntered(true); setNotice("");
+    if (!(await enterWithSession(uid))) { setLoginError("Tu cuenta no tiene acceso institucional."); await supabase.auth.signOut(); }
   };
   const persistProcesses = (all: Record<string, ProcessRecord>) => { saveProcesses(all); setProcesses(all); };
   const activeProcesses = Object.values(processes).filter(p => requests.some(r => r.code === p.code && r.status === "En proceso"));
