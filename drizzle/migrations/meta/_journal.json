@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "postgresql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792723406435,
+      "tag": "0000_profile_metadata_and_seed_establishments",
+      "breakpoints": true
+    }
+  ]
 }
