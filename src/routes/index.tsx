@@ -11,6 +11,7 @@ import { donorRank } from "@/lib/donor-recognition";
 import { CphView } from "@/components/nexovital/cph-view";
 import { SplashScreen } from "@/components/nexovital/splash-screen";
 import { QRCodeSVG } from "qrcode.react";
+import { DEMO_DONOR_DOC, eligibility, loadOutcomes, type Outcome } from "@/lib/donor-eligibility";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -28,7 +29,12 @@ type View = "home" | "tracking" | "history" | "account";
 type AuthMode = "login" | "register" | "recover";
 type Role = "donor" | "requester";
 
-const timeline = ["Emparejamiento aceptado", "En camino", "En establecimiento", "En tamizaje", "Donación realizada", "Exitosa"];
+const timeline = ["Emparejamiento aceptado", "En camino", "En establecimiento", "Tamizaje y entrevista", "En donación", "Validación final"];
+function useDonorOutcome() {
+  const [o, setO] = useState<Outcome | undefined>();
+  useEffect(() => { const f = () => setO(loadOutcomes()[DEMO_DONOR_DOC]); f(); window.addEventListener("storage", f); window.addEventListener("nexovital-outcome", f); return () => { window.removeEventListener("storage", f); window.removeEventListener("nexovital-outcome", f); }; }, []);
+  return o;
+}
 
 const donorHistory = [
   { date: "12 jun 2026", place: "Clínica Internacional", result: "CONCRETADA", hb: 13.8, bp: "120/80", pulse: 72 },
@@ -289,6 +295,7 @@ function Tracking({ role }: { role: Role }) {
   const [cancelled, setCancelled] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string> | null>(null);
+  const outcome = useDonorOutcome();
   useEffect(() => { try { const raw = localStorage.getItem(QUIZ_KEY); if (raw) setAnswers(JSON.parse(raw)); } catch { /* ignore */ } }, []);
 
   if (role === "requester") {
@@ -326,6 +333,8 @@ function Tracking({ role }: { role: Role }) {
   }
 
   return <div className="h-full overflow-y-auto px-5 pb-28 pt-28"><p className="text-xs font-extrabold uppercase text-primary">Seguimiento activo</p><h1 className="mt-2 text-2xl font-extrabold">Tu donación</h1><div className="mt-5 rounded-lg bg-primary p-5 text-primary-foreground shadow-brand"><p className="text-sm opacity-80">Hospital Dos de Mayo · 2.4 km</p><div className="mt-3 flex items-end justify-between"><span className="text-4xl font-extrabold">O+</span><span className="rounded-full bg-secondary px-3 py-1 text-xs font-extrabold text-secondary-foreground">Urgencia alta</span></div></div><div className="mt-7 space-y-0">{timeline.map((item,i)=><div key={item} className="flex gap-4"><div className="flex flex-col items-center"><span className={`grid size-8 place-items-center rounded-full ${i<=1?"bg-primary text-primary-foreground":"bg-muted text-muted-foreground"}`}>{i<1?"✓":i+1}</span>{i<timeline.length-1&&<span className={`${i===3?"h-24":"h-12"} w-0.5 ${i<1?"bg-primary":"bg-border"}`}/>}</div><div><p className="font-extrabold">{item}</p><p className="text-xs text-muted-foreground">{i===1?"Estado actual":i<1?"Completado":"Pendiente"}</p>{i===3&&<Button size="sm" variant="outline" className="mt-2" onClick={() => setQuizOpen(true)}>{answers ? "Ver mi código QR" : "Cuestionario predonación (opcional)"}</Button>}</div></div>)}</div>
+    {outcome?.kind === "temporal" && <p role="status" className="mt-5 rounded-lg tint-gold border p-4 text-sm"><b>Gracias por acercarte 💛</b><br/>Hoy tu cuerpo necesita un descanso. Podrás volver a donar a partir del <b>{outcome.until}</b>. ¡Te esperamos!</p>}
+    {outcome?.kind === "lab_rechazo" && <p role="status" className="mt-5 rounded-lg border bg-muted p-4 text-sm"><b>Citación confidencial</b><br/>Acércate al banco de sangre con tu DNI para entrega de resultados y consejería médica.</p>}
     {quizOpen && <PreDonationQuiz answers={answers} onSave={a => { setAnswers(a); localStorage.setItem(QUIZ_KEY, JSON.stringify(a)); }} onClose={() => setQuizOpen(false)} />}
     {cancelled ? <p role="status" className="mt-4 rounded-md bg-muted p-3 text-sm font-bold">Proceso cancelado. El solicitante fue notificado y podrá buscar nuevos donantes.</p> : confirmCancel ? <div className="mt-4 rounded-lg border border-destructive/40 bg-card p-4"><p className="text-sm font-bold">¿Seguro que deseas cancelar la donación? El solicitante será notificado.</p><div className="mt-3 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => setConfirmCancel(false)}>Volver</Button><Button variant="vivid" onClick={() => { setCancelled(true); setConfirmCancel(false); }}>Sí, cancelar</Button></div></div> : <Button className="mt-4 w-full" variant="outline" onClick={() => setConfirmCancel(true)}>Cancelar proceso</Button>}
   </div>;
@@ -434,6 +443,7 @@ function Account({role,darkMode,onToggleTheme}:{role:Role;darkMode:boolean;onTog
       <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary-foreground px-3 py-2 text-xl font-extrabold text-primary"><Droplets className="size-5"/>{profile.blood || "—"}</span>
     </div>
     <h2 className="mt-3 break-words text-2xl font-extrabold leading-tight">{profile.name}</h2>
+    {elig.status === "habilitado" ? <span className="mt-2 inline-block rounded-full bg-primary-foreground/15 px-3 py-1 text-xs font-extrabold">🟢 Habilitado</span> : elig.status === "diferido" ? <span className="mt-2 inline-block rounded-full bg-primary-foreground/15 px-3 py-1 text-xs font-extrabold">🟡 En descanso{elig.days ? ` · ${elig.days} días` : ""}</span> : <span className="mt-2 inline-block rounded-full bg-primary-foreground/15 px-3 py-1 text-xs font-extrabold">Consulta con tu banco de sangre</span>}
     <div className="mt-5 grid grid-cols-3 gap-2">
       <div className="donor-stat"><Droplets className="size-4"/><p>Donaciones</p><strong>{profile.donations}</strong></div>
       <div className="donor-stat"><Heart className="size-4"/><p>Vidas Salvadas</p><strong>~{profile.donations * 3}</strong></div>
