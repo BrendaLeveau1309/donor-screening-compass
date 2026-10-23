@@ -198,6 +198,7 @@ function Backoffice() {
 
   const toggleCenter = (name: string) => setCenters(cs => cs.map(c => c.name === name ? { ...c, active: !c.active } : c));
   const toggleStaff = (doc: string) => setStaff(ss => ss.map(s => s.document === doc ? { ...s, active: !s.active } : s));
+  const logout = () => { void supabase.auth.signOut(); setStaffUser(null); setDonationCtx(null); setEntered(false); };
 
   if (!entered) {
     const field = "flex items-center gap-3 rounded-lg border bg-surface px-4 focus-within:ring-2 focus-within:ring-primary/40";
@@ -224,7 +225,8 @@ function Backoffice() {
             <h2 className="text-4xl font-extrabold">Bienvenido</h2>
             <p className="mt-2 text-lg text-muted-foreground">Inicia sesión en la plataforma NexoVital</p>
             <label className="mt-8 block text-sm font-bold">Correo institucional<div className={`${field} mt-2`}><FileText className="size-5 text-muted-foreground" /><input name="email" type="email" required className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="nombre@hospital.pe" /></div></label>
-            <label className="mt-5 block text-sm font-bold">Contraseña<div className={`${field} mt-2`}><Lock className="size-5 text-muted-foreground" /><input required type={showPw ? "text" : "password"} className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="••••••" /><Button type="button" size="icon" variant="ghost" aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"} onClick={() => setShowPw(!showPw)}>{showPw ? <EyeOff /> : <Eye />}</Button></div></label>
+            <label className="mt-5 block text-sm font-bold">Contraseña<div className={`${field} mt-2`}><Lock className="size-5 text-muted-foreground" /><input name="password" required type={showPw ? "text" : "password"} className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="••••••" /><Button type="button" size="icon" variant="ghost" aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"} onClick={() => setShowPw(!showPw)}>{showPw ? <EyeOff /> : <Eye />}</Button></div></label>
+            {loginError && <p role="alert" className="mt-3 text-sm font-semibold text-destructive">{loginError}</p>}
             <Button type="button" variant="link" className="mt-3 px-0" onClick={() => setRecover(true)}>¿Olvidaste tu contraseña?</Button>
             <Button className="mt-4 h-14 w-full text-base" variant="vivid">Iniciar sesión <ArrowRight /></Button>
             <div className="mt-8 flex flex-col items-center gap-1 border-t pt-6">
