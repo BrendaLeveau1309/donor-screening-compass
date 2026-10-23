@@ -237,10 +237,12 @@ function AuthScreen({ mode, setMode, onDemo }: { mode: AuthMode; setMode: (mode:
   const submitLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setMessage("");
     const form = new FormData(event.currentTarget);
-    const documentNumber = String(form.get("document") ?? "").trim();
+    const email = String(form.get("email") ?? "").trim();
     const password = String(form.get("password") ?? "");
-    if (!/^\w{6,20}$/.test(documentNumber) || password.length < 8) { setMessage("Revisa el documento y usa una contraseña de al menos 8 caracteres."); setBusy(false); return; }
-    setMessage("Para ingresar con documento, primero crea tu cuenta con un correo válido."); setBusy(false);
+    if (!email.includes("@") || password.length < 8) { setMessage("Revisa el correo y usa una contraseña de al menos 8 caracteres."); setBusy(false); return; }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setBusy(false);
+    if (error) setMessage("No pudimos iniciar sesión. Revisa tus credenciales o confirma tu correo.");
   };
 
   return <main className="min-h-full bg-primary px-5 py-8 text-foreground"><div className="mx-auto flex min-h-full max-w-md flex-col justify-center">
@@ -250,7 +252,7 @@ function AuthScreen({ mode, setMode, onDemo }: { mode: AuthMode; setMode: (mode:
       <div className="p-6 sm:p-8">
       <p className="text-xs font-extrabold uppercase text-primary">{mode === "login" ? "Bienvenido de vuelta" : mode === "register" ? "Únete a la red" : "Recupera tu acceso"}</p>
       <h1 className="mt-2 text-3xl font-extrabold">{mode === "login" ? "Inicia sesión" : mode === "register" ? "Crea tu cuenta" : "Nueva contraseña"}</h1>
-      {mode === "login" && <form className="mt-6 space-y-4" onSubmit={submitLogin}><FieldSelect label="Tipo de documento" name="type" options={["DNI","CE","Pasaporte"]}/><Field label="Número de documento" name="document" placeholder="Ingresa tu documento" /><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/><Button type="button" variant="link" onClick={() => setMode("recover")} className="h-auto justify-start px-0 py-1 text-xs">¿Olvidaste tu contraseña?</Button><Button className="w-full" variant="vivid" size="lg" disabled={busy}>Iniciar sesión</Button><Button className="w-full" variant="ghost" type="button" onClick={() => setMode("register")}>Crear una cuenta</Button></form>}
+      {mode === "login" && <form className="mt-6 space-y-4" onSubmit={submitLogin}><Field label="Correo electrónico" name="email" type="email" placeholder="nombre@correo.com" /><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/><Button type="button" variant="link" onClick={() => setMode("recover")} className="h-auto justify-start px-0 py-1 text-xs">¿Olvidaste tu contraseña?</Button><Button className="w-full" variant="vivid" size="lg" disabled={busy}>Iniciar sesión</Button><Button className="w-full" variant="ghost" type="button" onClick={() => setMode("register")}>Crear una cuenta</Button></form>}
       {mode === "register" && <RegisterForm onDone={() => setMode("login")} setMessage={setMessage} />}
       {mode === "recover" && <RecoverFlow onDone={() => { setMode("login"); setMessage(""); }} />}
       {message && <p role="status" className="mt-4 rounded-md bg-muted p-3 text-sm font-semibold">{message}</p>}
@@ -294,7 +296,11 @@ function RecoverFlow({ onDone }: { onDone: () => void }) {
 }
 
 function RegisterForm({ onDone, setMessage }: { onDone: () => void; setMessage: (value: string) => void }) {
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const email=String(f.get("email")??"").trim(); const password=String(f.get("password")??""); if (!email.includes("@") || password.length < 8 || password !== String(f.get("confirm")??"")) return setMessage("Revisa el correo y confirma una contraseña de al menos 8 caracteres."); const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } }); setMessage(error ? "No pudimos crear la cuenta." : "Revisa tu correo para confirmar la cuenta. Luego podrás iniciar sesión."); if (!error) setTimeout(onDone, 1800); };
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const email=String(f.get("email")??"").trim(); const password=String(f.get("password")??""); if (!email.includes("@") || password.length < 8 || password !== String(f.get("confirm")??"")) return setMessage("Revisa el correo y confirma una contraseña de al menos 8 caracteres."); const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin, data: {
+    first_names: String(f.get("name") ?? "").trim(), last_names: "",
+    document_type: String(f.get("type") ?? "DNI"), document_number: String(f.get("document") ?? "").trim(),
+    phone: String(f.get("phone") ?? "").trim(), blood_group: String(f.get("blood") ?? ""), rh_factor: String(f.get("rh") ?? ""),
+  } } }); setMessage(error ? "No pudimos crear la cuenta." : "Revisa tu correo para confirmar la cuenta. Luego podrás iniciar sesión."); if (!error) setTimeout(onDone, 1800); };
   return <form className="mt-6 grid grid-cols-2 gap-3" onSubmit={submit}><FieldSelect label="Documento" name="type" options={["DNI","CE","Pasaporte"]}/><Field label="Número" name="document" placeholder="Documento"/><div className="col-span-2"><Field label="Nombres y apellidos" name="name" placeholder="Se completará al validar"/></div><div className="col-span-2"><Field label="Correo" name="email" type="email" placeholder="nombre@correo.com"/></div><div className="col-span-2"><Field label="Teléfono" name="phone" placeholder="999 999 999"/></div><FieldSelect label="Grupo" name="blood" options={["A","B","AB","O"]}/><FieldSelect label="Factor Rh" name="rh" options={["+","-"]}/><div className="col-span-2"><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/></div><div className="col-span-2"><Field label="Confirmar" name="confirm" type="password" placeholder="Repite la contraseña"/></div><label className="col-span-2 flex gap-2 text-xs text-muted-foreground"><input type="checkbox" required/>Acepto los términos y la política de privacidad.</label><Button className="col-span-2" variant="vivid" size="lg">Crear cuenta</Button><Button className="col-span-2" variant="ghost" type="button" onClick={onDone}>Cancelar</Button></form>;
 }
 
