@@ -17,5 +17,6 @@
 - Backoffice demo stage counters derive from the same persisted process records as the editor and refresh on storage events, so counts track stage transitions without a second source of truth.
 - Derive donor recognition and red-cell compatibility with pure shared helpers, and display compatibility separately from the carnet, so profile-specific rules remain testable without storing duplicate data.
 - Share clinical stages, screening fields and questionnaire definitions through a pure clinical-evaluation module; normalize legacy demo stages when reading so saved processes remain resumable.
+- Keep example questionnaire answers and clinical reason validation in the shared clinical-evaluation module; internal lab rejection reasons stay separate from donor outcomes to prevent result disclosure.
 
 - The mobile app (login, splash, and main views) renders inside a shared `PhoneFrame` wrapper in src/routes/index.tsx: 390px phone bezel on desktop, full-bleed below the sm breakpoint. Overlays meant to fill the app screen use `absolute inset-0`, not `fixed`, so they stay inside the frame.
