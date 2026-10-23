@@ -69,6 +69,14 @@ function NexoVitalApp() {
     setDarkMode(window.localStorage.getItem("nexovital-theme") === "dark");
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, []);
+  useEffect(() => {
+    void supabase.auth.getSession().then(({ data }) => { if (data.session) setAuthenticated(true); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(event => {
+      if (event === "SIGNED_IN") setAuthenticated(true);
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
   const toggleTheme = () => setDarkMode(current => {
     window.localStorage.setItem("nexovital-theme", current ? "light" : "dark");
     return !current;
@@ -186,7 +194,7 @@ function NexoVitalApp() {
         <Button className="w-full" variant="outline" onClick={cancelSearch}>Cancelar búsqueda</Button>
       </Modal>}
       {searchDone && <Modal title="Búsqueda finalizada" onClose={() => setSearchDone(false)}><p className="mb-4 text-sm text-muted-foreground">Encontramos donantes compatibles para la solicitud {searchCode.toUpperCase()}. Puedes seguir el avance de cada donación.</p><Button className="w-full" variant="vivid" size="lg" onClick={() => { setSearchDone(false); setView("tracking"); }}>Ver seguimiento</Button></Modal>}
-      {menuOpen && <SideMenu role={role} onRoleChange={changeRole} darkMode={darkMode} onToggleTheme={toggleTheme} onClose={() => { setMenuOpen(false); setMenuPanel(null); }} onLogout={() => setAuthenticated(false)} onOpen={p => { if (p === "cph") setMenuOpen(false); setMenuPanel(p); }} />}
+      {menuOpen && <SideMenu role={role} onRoleChange={changeRole} darkMode={darkMode} onToggleTheme={toggleTheme} onClose={() => { setMenuOpen(false); setMenuPanel(null); }} onLogout={() => { void supabase.auth.signOut(); setAuthenticated(false); }} onOpen={p => { if (p === "cph") setMenuOpen(false); setMenuPanel(p); }} />}
       {menuPanel === "cph" && <CphView onBack={() => setMenuPanel(null)} />}
       {menuPanel === "notifications" && <Modal title="Gestionar notificaciones" onClose={() => setMenuPanel(null)}><NotificationToggles /></Modal>}
       {menuPanel === "info" && <Modal title="Información para donar" onClose={() => setMenuPanel(null)}><p className="text-sm text-muted-foreground">Puedes donar si tienes entre 18 y 65 años, pesas más de 50 kg y han pasado al menos 3 meses desde tu última donación. Lleva tu documento de identidad y llega hidratado.</p></Modal>}
