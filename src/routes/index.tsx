@@ -391,6 +391,7 @@ function HistoryView({ role }: { role: Role }) {
 }
 
 function Account({role,darkMode,onToggleTheme}:{role:Role;darkMode:boolean;onToggleTheme:()=>void}){
+  const elig = eligibility(useDonorOutcome());
   const [copied, setCopied] = useState(false);
   const [shareError, setShareError] = useState("");
   const [profile, setProfile] = useState<{ name: string; blood: string; donations: number; document: string; email: string; phone: string; available: boolean; fitness: string } | null>(null);
