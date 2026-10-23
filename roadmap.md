@@ -30,4 +30,4 @@
 - [x] Inicio del backoffice sin botones de acción y con tarjeta de presentación roja (rol hospital y administrador)
 - [x] Rediseño minimalista del backoffice: barra lateral roja degradada, fondo cálido, tarjetas con acentos de color y chips de estado
 - [ ] Verificar el mapa de Google en la URL de vista previa (falla en localhost por restricción de dominio de la clave)
-- [ ] Conectar los flujos demo a la base de datos real (perfiles, solicitudes, donaciones)
+- [x] Conectar los flujos demo a la base de datos real: registro con perfil completo, login con correo en app y backoffice (rol institucional verificado), solicitudes creadas/listadas desde la nube, solicitud compatible en inicio del donante, búsqueda por código del solicitante, proceso de donación persistido (signos, estado final, aptitud del donante, unidades de la solicitud)

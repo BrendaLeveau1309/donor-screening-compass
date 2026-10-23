@@ -37,6 +37,32 @@ function useDonorOutcome() {
   return o;
 }
 
+type MatchRequest = { code: string; hospital: string; blood: string; urgency: string };
+/** Solicitud real compatible con el grupo sanguíneo del donante autenticado. */
+function useCompatibleRequest(enabled: boolean) {
+  const [req, setReq] = useState<MatchRequest | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: profile } = await supabase.from("profiles").select("blood_group, rh_factor").eq("id", session.user.id).maybeSingle();
+      if (!profile?.blood_group || !profile.rh_factor) return;
+      const { data } = await supabase.from("blood_requests")
+        .select("code, blood_group, rh_factor, urgency, health_establishments(name)")
+        .eq("status", "en_proceso").eq("blood_group", profile.blood_group).eq("rh_factor", profile.rh_factor)
+        .order("created_at", { ascending: false }).limit(1);
+      const r = data?.[0];
+      if (active && r) setReq({ code: r.code, hospital: (r.health_establishments as { name: string } | null)?.name ?? "Establecimiento de salud", blood: `${r.blood_group}${r.rh_factor}`, urgency: r.urgency });
+    })();
+    return () => { active = false; };
+  }, [enabled]);
+  return req;
+}
+
+const REQUEST_STATUS_LABEL: Record<string, string> = { en_proceso: "En proceso", atendida: "Atendida", cancelada: "Cancelada" };
+
 const donorHistory = [
   { date: "12 jun 2026", place: "Clínica Internacional", result: "CONCRETADA", hb: 13.8, bp: "120/80", pulse: 72 },
   { date: "03 ene 2026", place: "Hospital Rebagliati", result: "CONCRETADA", hb: 13.2, bp: "118/78", pulse: 70 },
@@ -62,12 +88,23 @@ function NexoVitalApp() {
   const [searching, setSearching] = useState(false);
   const [searchDone, setSearchDone] = useState(false);
   const [searchCode, setSearchCode] = useState("");
+  const [foundRequest, setFoundRequest] = useState<{ code: string; status: string; blood: string; units: string; urgency: string } | null>(null);
+  const [searchMiss, setSearchMiss] = useState(false);
+  const matchRequest = useCompatibleRequest(authenticated && role === "donor");
   const [darkMode, setDarkMode] = useState(false);
   const searchTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setDarkMode(window.localStorage.getItem("nexovital-theme") === "dark");
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, []);
+  useEffect(() => {
+    void supabase.auth.getSession().then(({ data }) => { if (data.session) setAuthenticated(true); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(event => {
+      if (event === "SIGNED_IN") setAuthenticated(true);
+      if (event === "SIGNED_OUT") setAuthenticated(false);
+    });
+    return () => subscription.unsubscribe();
   }, []);
   const toggleTheme = () => setDarkMode(current => {
     window.localStorage.setItem("nexovital-theme", current ? "light" : "dark");
@@ -104,10 +141,19 @@ function NexoVitalApp() {
     </PhoneFrame>
   );
 
-  const startSearch = () => {
+  const startSearch = async () => {
     if (!searchCode.trim()) return;
     setSearching(true);
-    searchTimer.current = window.setTimeout(() => { setSearching(false); setSearchDone(true); searchTimer.current = null; }, 2200);
+    setFoundRequest(null); setSearchMiss(false);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      searchTimer.current = window.setTimeout(() => { setSearching(false); setSearchDone(true); searchTimer.current = null; }, 2200);
+      return;
+    }
+    const { data } = await supabase.from("blood_requests").select("code, status, blood_group, rh_factor, units_required, units_fulfilled, urgency").ilike("code", searchCode.trim()).maybeSingle();
+    if (data) setFoundRequest({ code: data.code, status: REQUEST_STATUS_LABEL[data.status] ?? data.status, blood: `${data.blood_group}${data.rh_factor}`, units: `${data.units_fulfilled} / ${data.units_required}`, urgency: data.urgency });
+    else setSearchMiss(true);
+    setSearching(false); setSearchDone(true);
   };
 
   return (
@@ -139,11 +185,11 @@ function NexoVitalApp() {
                {showMatch && secondsLeft > 0 && (
                 <section className="glass-panel absolute inset-x-3 bottom-24 z-20 overflow-hidden rounded-lg border border-border p-4 border-t-4 border-t-chart-teal">
                   <div className="flex items-start justify-between gap-3">
-                    <div><p className="text-[10px] font-extrabold uppercase text-chart-teal">Solicitud compatible · NV-28491</p><h2 className="mt-1 text-base font-extrabold">Hospital Dos de Mayo</h2></div>
+                    <div><p className="text-[10px] font-extrabold uppercase text-chart-teal">Solicitud compatible · {matchRequest?.code ?? "NV-28491"}</p><h2 className="mt-1 text-base font-extrabold">{matchRequest?.hospital ?? "Hospital Dos de Mayo"}</h2></div>
                      <span role="timer" aria-label={`Tiempo restante: ${secondsLeft} segundos`} className="flex items-center gap-1 rounded-full bg-secondary px-3 py-1.5 text-xs font-extrabold"><Clock3 className="size-3.5" />00:{String(secondsLeft).padStart(2, "0")}</span>
                   </div>
                   <div className="my-3 grid grid-cols-3 gap-2 text-center text-xs">
-                    <Info label="Distancia" value="2.4 km" /><Info label="Requiere" value="O+" /><Info label="Urgencia" value="Alta" urgent />
+                    <Info label="Distancia" value="2.4 km" /><Info label="Requiere" value={matchRequest?.blood ?? "O+"} /><Info label="Urgencia" value={matchRequest?.urgency ?? "Alta"} urgent />
                    </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant="outline" size="lg" onClick={() => setShowMatch(false)}>Rechazar</Button>
@@ -185,8 +231,8 @@ function NexoVitalApp() {
         </div>
         <Button className="w-full" variant="outline" onClick={cancelSearch}>Cancelar búsqueda</Button>
       </Modal>}
-      {searchDone && <Modal title="Búsqueda finalizada" onClose={() => setSearchDone(false)}><p className="mb-4 text-sm text-muted-foreground">Encontramos donantes compatibles para la solicitud {searchCode.toUpperCase()}. Puedes seguir el avance de cada donación.</p><Button className="w-full" variant="vivid" size="lg" onClick={() => { setSearchDone(false); setView("tracking"); }}>Ver seguimiento</Button></Modal>}
-      {menuOpen && <SideMenu role={role} onRoleChange={changeRole} darkMode={darkMode} onToggleTheme={toggleTheme} onClose={() => { setMenuOpen(false); setMenuPanel(null); }} onLogout={() => setAuthenticated(false)} onOpen={p => { if (p === "cph") setMenuOpen(false); setMenuPanel(p); }} />}
+      {searchDone && <Modal title="Búsqueda finalizada" onClose={() => setSearchDone(false)}>{foundRequest ? <div className="mb-4"><p className="text-sm text-muted-foreground">Solicitud encontrada en la red NexoVital.</p><div className="mt-3 rounded-md border bg-card p-4 text-sm"><p className="font-extrabold">{foundRequest.code} · {foundRequest.blood}</p><p className="mt-1 text-muted-foreground">{foundRequest.units} unidades · Urgencia {foundRequest.urgency}</p><p className="mt-1 font-bold text-primary">{foundRequest.status}</p></div></div> : searchMiss ? <p className="mb-4 text-sm text-muted-foreground">No encontramos una solicitud con el código {searchCode.toUpperCase()}. Verifica el código entregado por el hospital.</p> : <p className="mb-4 text-sm text-muted-foreground">Encontramos donantes compatibles para la solicitud {searchCode.toUpperCase()}. Puedes seguir el avance de cada donación.</p>}<Button className="w-full" variant="vivid" size="lg" onClick={() => { setSearchDone(false); setView("tracking"); }}>Ver seguimiento</Button></Modal>}
+      {menuOpen && <SideMenu role={role} onRoleChange={changeRole} darkMode={darkMode} onToggleTheme={toggleTheme} onClose={() => { setMenuOpen(false); setMenuPanel(null); }} onLogout={() => { void supabase.auth.signOut(); setAuthenticated(false); }} onOpen={p => { if (p === "cph") setMenuOpen(false); setMenuPanel(p); }} />}
       {menuPanel === "cph" && <CphView onBack={() => setMenuPanel(null)} />}
       {menuPanel === "notifications" && <Modal title="Gestionar notificaciones" onClose={() => setMenuPanel(null)}><NotificationToggles /></Modal>}
       {menuPanel === "info" && <Modal title="Información para donar" onClose={() => setMenuPanel(null)}><p className="text-sm text-muted-foreground">Puedes donar si tienes entre 18 y 65 años, pesas más de 50 kg y han pasado al menos 3 meses desde tu última donación. Lleva tu documento de identidad y llega hidratado.</p></Modal>}
@@ -229,10 +275,12 @@ function AuthScreen({ mode, setMode, onDemo }: { mode: AuthMode; setMode: (mode:
   const submitLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setMessage("");
     const form = new FormData(event.currentTarget);
-    const documentNumber = String(form.get("document") ?? "").trim();
+    const email = String(form.get("email") ?? "").trim();
     const password = String(form.get("password") ?? "");
-    if (!/^\w{6,20}$/.test(documentNumber) || password.length < 8) { setMessage("Revisa el documento y usa una contraseña de al menos 8 caracteres."); setBusy(false); return; }
-    setMessage("Para ingresar con documento, primero crea tu cuenta con un correo válido."); setBusy(false);
+    if (!email.includes("@") || password.length < 8) { setMessage("Revisa el correo y usa una contraseña de al menos 8 caracteres."); setBusy(false); return; }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setBusy(false);
+    if (error) setMessage("No pudimos iniciar sesión. Revisa tus credenciales o confirma tu correo.");
   };
 
   return <main className="min-h-full bg-primary px-5 py-8 text-foreground"><div className="mx-auto flex min-h-full max-w-md flex-col justify-center">
@@ -242,7 +290,7 @@ function AuthScreen({ mode, setMode, onDemo }: { mode: AuthMode; setMode: (mode:
       <div className="p-6 sm:p-8">
       <p className="text-xs font-extrabold uppercase text-primary">{mode === "login" ? "Bienvenido de vuelta" : mode === "register" ? "Únete a la red" : "Recupera tu acceso"}</p>
       <h1 className="mt-2 text-3xl font-extrabold">{mode === "login" ? "Inicia sesión" : mode === "register" ? "Crea tu cuenta" : "Nueva contraseña"}</h1>
-      {mode === "login" && <form className="mt-6 space-y-4" onSubmit={submitLogin}><FieldSelect label="Tipo de documento" name="type" options={["DNI","CE","Pasaporte"]}/><Field label="Número de documento" name="document" placeholder="Ingresa tu documento" /><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/><Button type="button" variant="link" onClick={() => setMode("recover")} className="h-auto justify-start px-0 py-1 text-xs">¿Olvidaste tu contraseña?</Button><Button className="w-full" variant="vivid" size="lg" disabled={busy}>Iniciar sesión</Button><Button className="w-full" variant="ghost" type="button" onClick={() => setMode("register")}>Crear una cuenta</Button></form>}
+      {mode === "login" && <form className="mt-6 space-y-4" onSubmit={submitLogin}><Field label="Correo electrónico" name="email" type="email" placeholder="nombre@correo.com" /><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/><Button type="button" variant="link" onClick={() => setMode("recover")} className="h-auto justify-start px-0 py-1 text-xs">¿Olvidaste tu contraseña?</Button><Button className="w-full" variant="vivid" size="lg" disabled={busy}>Iniciar sesión</Button><Button className="w-full" variant="ghost" type="button" onClick={() => setMode("register")}>Crear una cuenta</Button></form>}
       {mode === "register" && <RegisterForm onDone={() => setMode("login")} setMessage={setMessage} />}
       {mode === "recover" && <RecoverFlow onDone={() => { setMode("login"); setMessage(""); }} />}
       {message && <p role="status" className="mt-4 rounded-md bg-muted p-3 text-sm font-semibold">{message}</p>}
@@ -286,7 +334,11 @@ function RecoverFlow({ onDone }: { onDone: () => void }) {
 }
 
 function RegisterForm({ onDone, setMessage }: { onDone: () => void; setMessage: (value: string) => void }) {
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const email=String(f.get("email")??"").trim(); const password=String(f.get("password")??""); if (!email.includes("@") || password.length < 8 || password !== String(f.get("confirm")??"")) return setMessage("Revisa el correo y confirma una contraseña de al menos 8 caracteres."); const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } }); setMessage(error ? "No pudimos crear la cuenta." : "Revisa tu correo para confirmar la cuenta. Luego podrás iniciar sesión."); if (!error) setTimeout(onDone, 1800); };
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const email=String(f.get("email")??"").trim(); const password=String(f.get("password")??""); if (!email.includes("@") || password.length < 8 || password !== String(f.get("confirm")??"")) return setMessage("Revisa el correo y confirma una contraseña de al menos 8 caracteres."); const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin, data: {
+    first_names: String(f.get("name") ?? "").trim(), last_names: "",
+    document_type: String(f.get("type") ?? "DNI"), document_number: String(f.get("document") ?? "").trim(),
+    phone: String(f.get("phone") ?? "").trim(), blood_group: String(f.get("blood") ?? ""), rh_factor: String(f.get("rh") ?? ""),
+  } } }); setMessage(error ? "No pudimos crear la cuenta." : "Revisa tu correo para confirmar la cuenta. Luego podrás iniciar sesión."); if (!error) setTimeout(onDone, 1800); };
   return <form className="mt-6 grid grid-cols-2 gap-3" onSubmit={submit}><FieldSelect label="Documento" name="type" options={["DNI","CE","Pasaporte"]}/><Field label="Número" name="document" placeholder="Documento"/><div className="col-span-2"><Field label="Nombres y apellidos" name="name" placeholder="Se completará al validar"/></div><div className="col-span-2"><Field label="Correo" name="email" type="email" placeholder="nombre@correo.com"/></div><div className="col-span-2"><Field label="Teléfono" name="phone" placeholder="999 999 999"/></div><FieldSelect label="Grupo" name="blood" options={["A","B","AB","O"]}/><FieldSelect label="Factor Rh" name="rh" options={["+","-"]}/><div className="col-span-2"><Field label="Contraseña" name="password" type="password" placeholder="Mínimo 8 caracteres"/></div><div className="col-span-2"><Field label="Confirmar" name="confirm" type="password" placeholder="Repite la contraseña"/></div><label className="col-span-2 flex gap-2 text-xs text-muted-foreground"><input type="checkbox" required/>Acepto los términos y la política de privacidad.</label><Button className="col-span-2" variant="vivid" size="lg">Crear cuenta</Button><Button className="col-span-2" variant="ghost" type="button" onClick={onDone}>Cancelar</Button></form>;
 }
 

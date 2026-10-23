@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CphAdmin } from "@/components/nexovital/cph-admin";
 import { LiquidRed } from "@/components/nexovital/liquid-red";
 import { daysUntil, loadOutcomes, saveOutcome, type Outcome } from "@/lib/donor-eligibility";
+import { supabase } from "@/integrations/supabase/client";
 import { CLINICAL_FIELDS, CLINICAL_STEPS, DEMO_DIGITAL_ANSWERS, DONATION_INTERRUPTION_REASONS, UNIT_REJECTION_REASONS, resolveClinicalReason, normalizeClinicalStep, PREDONATION_QUESTIONS, questionnaireReview, type ClinicalStep } from "@/lib/clinical-evaluation";
 
 export const Route = createFileRoute("/backoffice")({
@@ -106,12 +107,64 @@ function Backoffice() {
   const [record, setRecord] = useState<ProcessRecord | null>(null);
   const [editing, setEditing] = useState(false);
   const [processes, setProcesses] = useState<Record<string, ProcessRecord>>({});
+  const [staffUser, setStaffUser] = useState<{ id: string; establishmentId: string | null; isAdmin: boolean } | null>(null);
+  const [loginError, setLoginError] = useState("");
+  const [donationCtx, setDonationCtx] = useState<{ requestId: string; donorId: string; donationId: string | null } | null>(null);
   useEffect(() => {
     const refresh = () => setProcesses(loadProcesses());
     refresh();
     window.addEventListener("storage", refresh);
     return () => window.removeEventListener("storage", refresh);
   }, []);
+  // Con sesión institucional real, las solicitudes vienen de la base de datos compartida.
+  useEffect(() => {
+    if (!staffUser) return;
+    void (async () => {
+      const { data } = await supabase.from("blood_requests").select("*").order("created_at", { ascending: false });
+      if (data) setRequests(data.map(r => ({
+        code: r.code, patient: r.patient_name, patientDoc: r.patient_document, blood: r.blood_group, rh: r.rh_factor,
+        units: r.units_required, fulfilled: r.units_fulfilled, urgency: r.urgency,
+        status: r.status === "en_proceso" ? "En proceso" as const : r.status === "atendida" ? "Atendida" as const : "Cancelada" as const,
+        created: new Date(r.created_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }),
+        closed: r.closed_at ? new Date(r.closed_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }) : null,
+        donations: [],
+      })));
+    })();
+  }, [staffUser]);
+
+  const enterWithSession = async (uid: string): Promise<boolean> => {
+    const [{ data: isStaff }, { data: isAdmin }] = await Promise.all([
+      supabase.rpc("has_role", { _user_id: uid, _role: "hospital_staff" }),
+      supabase.rpc("has_role", { _user_id: uid, _role: "admin" }),
+    ]);
+    if (!isStaff && !isAdmin) return false;
+    const { data: profile } = await supabase.from("profiles").select("establishment_id").eq("id", uid).maybeSingle();
+    setStaffUser({ id: uid, establishmentId: profile?.establishment_id ?? null, isAdmin: !!isAdmin });
+    setRole(isAdmin ? "admin" : "hospital");
+    setEntered(true); setNotice("");
+    return true;
+  };
+  // Sesión institucional persistente: entra directo si ya inició sesión.
+  useEffect(() => {
+    void supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session) await enterWithSession(data.session.user.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginError("");
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "");
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { setLoginError("Credenciales incorrectas o cuenta sin confirmar."); return; }
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+    if (!uid) { setLoginError("No pudimos verificar tu sesión."); return; }
+    if (!(await enterWithSession(uid))) { setLoginError("Tu cuenta no tiene acceso institucional."); await supabase.auth.signOut(); }
+  };
   const persistProcesses = (all: Record<string, ProcessRecord>) => { saveProcesses(all); setProcesses(all); };
   const activeProcesses = Object.values(processes).filter(p => requests.some(r => r.code === p.code && r.status === "En proceso"));
   const donationUsers = new Set(activeProcesses.filter(p => p.step === "donacion").map(p => p.donorDoc)).size;
@@ -130,7 +183,7 @@ function Backoffice() {
   const navigate = (next: Section) => { setSection(next); setNotice(""); setQuery(""); setSearch(""); setDetail(null); };
   const toggleRole = () => { setRole(role === "admin" ? "hospital" : "admin"); navigate("dashboard"); };
 
-  const save = (event: FormEvent<HTMLFormElement>) => {
+  const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
@@ -141,11 +194,33 @@ function Backoffice() {
       if (!patientName || !requesterName) { setNotice("Escribe el nombre y apellido de cada DNI."); return; }
       const code = `NV-${Math.floor(10000 + Math.random() * 90000)}`;
       const blood = String(data.get("blood") ?? "O");
-      setRequests(current => [{
-        code, patient: patientName, patientDoc: `DNI ${patientDni}`, requesterDoc: `DNI ${requesterDni}`, requesterName, originHospital: String(data.get("origin") ?? "").trim(), blood: blood.replace(/[+-]/, ""), rh: blood.includes("-") ? "-" : "+",
-        units: Number(data.get("units") ?? 1), fulfilled: 0, urgency: String(data.get("urgency") ?? "Media"),
-        status: "En proceso", created: "hoy", closed: null, donations: [],
-      }, ...current]);
+      const bloodGroup = blood.replace(/[+-]/, "");
+      const rh = blood.includes("-") ? "-" : "+";
+      const units = Number(data.get("units") ?? 1);
+      const urgency = String(data.get("urgency") ?? "Media");
+      if (staffUser) {
+        if (!staffUser.establishmentId) { setNotice("Tu cuenta no tiene un establecimiento asignado. Pide al administrador que lo vincule."); return; }
+        const { error } = await supabase.from("blood_requests").insert({
+          code, establishment_id: staffUser.establishmentId, patient_name: patientName, patient_document: `DNI ${patientDni}`,
+          blood_group: bloodGroup, rh_factor: rh, units_required: units, urgency,
+        });
+        if (error) { setNotice("No pudimos registrar la solicitud en la red. Inténtalo de nuevo."); return; }
+        const { data: rows } = await supabase.from("blood_requests").select("*").order("created_at", { ascending: false });
+        if (rows) setRequests(rows.map(r => ({
+          code: r.code, patient: r.patient_name, patientDoc: r.patient_document, blood: r.blood_group, rh: r.rh_factor,
+          units: r.units_required, fulfilled: r.units_fulfilled, urgency: r.urgency,
+          status: r.status === "en_proceso" ? "En proceso" as const : r.status === "atendida" ? "Atendida" as const : "Cancelada" as const,
+          created: new Date(r.created_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }),
+          closed: r.closed_at ? new Date(r.closed_at).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }) : null,
+          donations: [],
+        })));
+      } else {
+        setRequests(current => [{
+          code, patient: patientName, patientDoc: `DNI ${patientDni}`, requesterDoc: `DNI ${requesterDni}`, requesterName, originHospital: String(data.get("origin") ?? "").trim(), blood: bloodGroup, rh,
+          units, fulfilled: 0, urgency,
+          status: "En proceso", created: "hoy", closed: null, donations: [],
+        }, ...current]);
+      }
       setDialog(null); setNewCode(code); navigate("requests");
       return;
     }
@@ -157,6 +232,7 @@ function Backoffice() {
 
   const toggleCenter = (name: string) => setCenters(cs => cs.map(c => c.name === name ? { ...c, active: !c.active } : c));
   const toggleStaff = (doc: string) => setStaff(ss => ss.map(s => s.document === doc ? { ...s, active: !s.active } : s));
+  const logout = () => { void supabase.auth.signOut(); setStaffUser(null); setDonationCtx(null); setEntered(false); };
 
   if (!entered) {
     const field = "flex items-center gap-3 rounded-lg border bg-surface px-4 focus-within:ring-2 focus-within:ring-primary/40";
@@ -179,12 +255,12 @@ function Backoffice() {
             <label className="mt-8 block text-sm font-bold">Correo institucional<div className={`${field} mt-2`}><User className="size-5 text-muted-foreground" /><input type="email" required className="w-full bg-transparent py-3.5 outline-none" placeholder="nombre@hospital.pe" /></div></label>
             <Button className="mt-6 h-14 w-full text-base" variant="vivid">Enviar instrucciones</Button>
             <Button type="button" className="mt-2 w-full" variant="ghost" onClick={() => { setRecover(false); setNotice(""); }}>Volver</Button>
-          </form> : <form onSubmit={event => { event.preventDefault(); setEntered(true); setNotice(""); }}>
+          </form> : <form onSubmit={submitLogin}>
             <h2 className="text-4xl font-extrabold">Bienvenido</h2>
             <p className="mt-2 text-lg text-muted-foreground">Inicia sesión en la plataforma NexoVital</p>
-            <label className="mt-8 block text-sm font-bold">Tipo de documento<div className={`${field} mt-2`}><FileText className="size-5 text-muted-foreground" /><select className="w-full bg-transparent py-3.5 font-normal outline-none"><option>DNI</option><option>Carné de extranjería</option><option>Pasaporte</option></select></div></label>
-            <label className="mt-5 block text-sm font-bold">Número de documento<div className={`${field} mt-2`}><User className="size-5 text-muted-foreground" /><input required inputMode="numeric" className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="Ingresa tu número de documento" /></div></label>
-            <label className="mt-5 block text-sm font-bold">Contraseña<div className={`${field} mt-2`}><Lock className="size-5 text-muted-foreground" /><input required type={showPw ? "text" : "password"} className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="••••••" /><Button type="button" size="icon" variant="ghost" aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"} onClick={() => setShowPw(!showPw)}>{showPw ? <EyeOff /> : <Eye />}</Button></div></label>
+            <label className="mt-8 block text-sm font-bold">Correo institucional<div className={`${field} mt-2`}><FileText className="size-5 text-muted-foreground" /><input name="email" type="email" required className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="nombre@hospital.pe" /></div></label>
+            <label className="mt-5 block text-sm font-bold">Contraseña<div className={`${field} mt-2`}><Lock className="size-5 text-muted-foreground" /><input name="password" required type={showPw ? "text" : "password"} className="w-full bg-transparent py-3.5 font-normal outline-none" placeholder="••••••" /><Button type="button" size="icon" variant="ghost" aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"} onClick={() => setShowPw(!showPw)}>{showPw ? <EyeOff /> : <Eye />}</Button></div></label>
+            {loginError && <p role="alert" className="mt-3 text-sm font-semibold text-destructive">{loginError}</p>}
             <Button type="button" variant="link" className="mt-3 px-0" onClick={() => setRecover(true)}>¿Olvidaste tu contraseña?</Button>
             <Button className="mt-4 h-14 w-full text-base" variant="vivid">Iniciar sesión <ArrowRight /></Button>
             <div className="mt-8 flex flex-col items-center gap-1 border-t pt-6">
@@ -209,7 +285,7 @@ function Backoffice() {
   );
   const detailRequest = detail ? requests.find(r => r.code === detail) : null;
 
-  const identifyProcess = (event: FormEvent<HTMLFormElement>) => {
+  const identifyProcess = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const code = String(data.get("code") ?? "").trim().toUpperCase();
@@ -221,6 +297,20 @@ function Backoffice() {
     all[`${code}|${doc}`] = existing; persistProcesses(all);
     setRecord(existing); setDeferral(null); setInterrupted(false); setRejected(false); setEditing(false); setProcessError(""); setProcessStep(existing.step);
     setPriorOutcome(loadOutcomes()[doc]);
+    // Con sesión institucional, vincula el proceso a la solicitud y al donante reales.
+    if (staffUser) {
+      const { data: reqRow } = await supabase.from("blood_requests").select("id").eq("code", code).eq("status", "en_proceso").maybeSingle();
+      const { data: donor } = await supabase.from("profiles").select("id").eq("document_number", doc.replace(/\D/g, "")).maybeSingle();
+      if (reqRow && donor) {
+        const { data: existingDonation } = await supabase.from("donations").select("id").eq("request_id", reqRow.id).eq("donor_id", donor.id).maybeSingle();
+        if (existingDonation) {
+          setDonationCtx({ requestId: reqRow.id, donorId: donor.id, donationId: existingDonation.id });
+        } else {
+          const { data: created } = await supabase.from("donations").insert({ request_id: reqRow.id, donor_id: donor.id, status: "en_establecimiento" }).select("id").single();
+          setDonationCtx({ requestId: reqRow.id, donorId: donor.id, donationId: created?.id ?? null });
+        }
+      } else setDonationCtx(null);
+    }
     try {
       const saved = JSON.parse(localStorage.getItem("nexovital-predonacion") ?? "null");
       const hasAnswers = saved && typeof saved === "object" && !Array.isArray(saved);
@@ -232,17 +322,46 @@ function Backoffice() {
     if (!record) return;
     const next = { ...record, ...patch, updatedBy: "Valeria M." };
     const all = loadProcesses(); all[`${next.code}|${next.donorDoc}`] = next; persistProcesses(all); setRecord(next);
+    // Persiste los signos vitales de la evaluación clínica en la donación real.
+    if (donationCtx?.donationId && (patch.hb !== undefined || patch.bp !== undefined || patch.pulse !== undefined)) {
+      void supabase.from("donations").update({
+        hemoglobin: patch.hb ? Number(patch.hb) : null,
+        blood_pressure: patch.bp ?? null,
+        pulse: patch.pulse ? Number(patch.pulse) : null,
+        status: "en_tamizaje",
+      }).eq("id", donationCtx.donationId);
+    }
   };
-  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => { setEditing(false); setDeferral(null); setInterrupted(false); setRejected(false); setProcessStep(step); if (record) updateRecord({ ...patch, step }); };
+  const goStep = (step: Step, patch: Partial<ProcessRecord> = {}) => {
+    setEditing(false); setDeferral(null); setInterrupted(false); setRejected(false); setProcessStep(step);
+    if (record) updateRecord({ ...patch, step });
+    if (step === "laboratorio" && patch.donation === "realizada" && donationCtx?.donationId) {
+      void supabase.from("donations").update({ status: "donacion_realizada" }).eq("id", donationCtx.donationId);
+    }
+  };
   const finishProcess = (status: string, result: string) => {
     if (!record) return;
     const ok = status === "Exitosa";
     setRequests(rs => rs.map(r => r.code === record.code ? { ...r, fulfilled: ok ? Math.min(r.units, r.fulfilled + 1) : r.fulfilled, donations: [...r.donations, { alias: `Donante ${record.donorDoc}`, status, result }] } : r));
     const all = loadProcesses(); delete all[`${record.code}|${record.donorDoc}`]; persistProcesses(all);
+    // Cierra la donación real: estado, aptitud del donante y unidades de la solicitud.
+    if (donationCtx) {
+      const ctx = donationCtx;
+      const fitness = ok ? "apto" : status === "Diferido temporal" ? "no_apto_temporal" : status === "No apto permanente" ? "no_apto_permanente" : status === "No exitosa" ? "pendiente_confirmacion" : "pendiente";
+      void (async () => {
+        if (ctx.donationId) await supabase.from("donations").update({ status: ok ? "exitosa" : "no_concretada", fitness, fitness_reason: result, completed_at: new Date().toISOString() }).eq("id", ctx.donationId);
+        await supabase.rpc("set_donor_fitness", { _donor_id: ctx.donorId, _fitness: fitness });
+        if (ok) {
+          const { data: reqRow } = await supabase.from("blood_requests").select("units_fulfilled, units_required").eq("id", ctx.requestId).single();
+          if (reqRow) await supabase.from("blood_requests").update({ units_fulfilled: Math.min(reqRow.units_required, reqRow.units_fulfilled + 1) }).eq("id", ctx.requestId);
+        }
+      })();
+    }
+    setDonationCtx(null);
     setRecord(null); setProcessStep("identify"); setNotice(`Proceso cerrado: ${result}. Se registró en el historial de la solicitud.`);
   };
 
-  return <main className="flex min-h-screen bg-bo-canvas"><aside className="bo-sidebar hidden w-64 shrink-0 p-6 text-primary-foreground md:flex md:flex-col"><div className="flex items-center gap-3"><NexoLogo className="size-10" /><b className="text-xl">NexoVital</b></div><p className="mt-8 text-xs font-extrabold uppercase text-primary-foreground/70">{role === "admin" ? "Administración" : "Hospital Dos de Mayo"}</p><nav className="mt-5 space-y-2">{items.map(({ id, label, icon: Icon }) => <Button key={id} className={`h-11 w-full justify-start border-0 ${section === id ? "bg-primary-foreground text-primary hover:bg-primary-foreground" : "bg-transparent text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"}`} variant="ghost" onClick={() => navigate(id)}><Icon />{label}</Button>)}</nav><Button className="mt-auto justify-start bg-transparent text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground" variant="ghost" onClick={() => setEntered(false)}><LogOut />Cerrar sesión</Button></aside><section className="min-w-0 flex-1"><header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b bg-surface px-5 py-3 lg:px-8"><div><p className="text-xs font-extrabold uppercase text-primary">{role === "admin" ? "Administrador" : "Personal hospitalario"}</p><h1 className="text-xl font-extrabold">NexoVital <span className="font-medium text-muted-foreground">/ Panel operativo</span></h1></div><div className="flex items-center gap-2"><Button variant="outline" onClick={toggleRole}>Cambiar rol demo</Button><span className="grid size-10 place-items-center rounded-full bg-primary font-extrabold text-primary-foreground">VM</span></div></header><nav className="flex gap-1 overflow-x-auto border-b bg-surface px-4 py-2 md:hidden">{items.map(({ id, label }) => <Button key={id} size="sm" variant={section === id ? "default" : "ghost"} onClick={() => navigate(id)}>{label}</Button>)}<Button size="icon" variant="ghost" aria-label="Cerrar sesión" onClick={() => setEntered(false)}><LogOut /></Button></nav><div className="mx-auto max-w-7xl p-5 lg:p-10">{notice && <p role="status" className="mb-5 rounded-lg bg-accent p-3 text-sm font-bold text-accent-foreground">{notice}</p>}
+  return <main className="flex min-h-screen bg-bo-canvas"><aside className="bo-sidebar hidden w-64 shrink-0 p-6 text-primary-foreground md:flex md:flex-col"><div className="flex items-center gap-3"><NexoLogo className="size-10" /><b className="text-xl">NexoVital</b></div><p className="mt-8 text-xs font-extrabold uppercase text-primary-foreground/70">{role === "admin" ? "Administración" : "Hospital Dos de Mayo"}</p><nav className="mt-5 space-y-2">{items.map(({ id, label, icon: Icon }) => <Button key={id} className={`h-11 w-full justify-start border-0 ${section === id ? "bg-primary-foreground text-primary hover:bg-primary-foreground" : "bg-transparent text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"}`} variant="ghost" onClick={() => navigate(id)}><Icon />{label}</Button>)}</nav><Button className="mt-auto justify-start bg-transparent text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground" variant="ghost" onClick={logout}><LogOut />Cerrar sesión</Button></aside><section className="min-w-0 flex-1"><header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b bg-surface px-5 py-3 lg:px-8"><div><p className="text-xs font-extrabold uppercase text-primary">{role === "admin" ? "Administrador" : "Personal hospitalario"}</p><h1 className="text-xl font-extrabold">NexoVital <span className="font-medium text-muted-foreground">/ Panel operativo</span></h1></div><div className="flex items-center gap-2"><Button variant="outline" onClick={toggleRole}>Cambiar rol demo</Button><span className="grid size-10 place-items-center rounded-full bg-primary font-extrabold text-primary-foreground">VM</span></div></header><nav className="flex gap-1 overflow-x-auto border-b bg-surface px-4 py-2 md:hidden">{items.map(({ id, label }) => <Button key={id} size="sm" variant={section === id ? "default" : "ghost"} onClick={() => navigate(id)}>{label}</Button>)}<Button size="icon" variant="ghost" aria-label="Cerrar sesión" onClick={logout}><LogOut /></Button></nav><div className="mx-auto max-w-7xl p-5 lg:p-10">{notice && <p role="status" className="mb-5 rounded-lg bg-accent p-3 text-sm font-bold text-accent-foreground">{notice}</p>}
 
       {section === "dashboard" && <>
         <section className="bo-hero rounded-2xl p-7 text-primary-foreground sm:p-9">
