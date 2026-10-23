@@ -11,6 +11,7 @@ import { donorRank } from "@/lib/donor-recognition";
 import { CphView } from "@/components/nexovital/cph-view";
 import { SplashScreen } from "@/components/nexovital/splash-screen";
 import { QRCodeSVG } from "qrcode.react";
+import { PREDONATION_QUESTIONS } from "@/lib/clinical-evaluation";
 import { DEMO_DONOR_DOC, eligibility, loadOutcomes, type Outcome } from "@/lib/donor-eligibility";
 
 export const Route = createFileRoute("/")({
@@ -333,7 +334,7 @@ function Tracking({ role }: { role: Role }) {
   }
 
   return <div className="h-full overflow-y-auto px-5 pb-28 pt-28"><p className="text-xs font-extrabold uppercase text-primary">Seguimiento activo</p><h1 className="mt-2 text-2xl font-extrabold">Tu donación</h1><div className="mt-5 rounded-lg bg-primary p-5 text-primary-foreground shadow-brand"><p className="text-sm opacity-80">Hospital Dos de Mayo · 2.4 km</p><div className="mt-3 flex items-end justify-between"><span className="text-4xl font-extrabold">O+</span><span className="rounded-full bg-secondary px-3 py-1 text-xs font-extrabold text-secondary-foreground">Urgencia alta</span></div></div><div className="mt-7 space-y-0">{timeline.map((item,i)=><div key={item} className="flex gap-4"><div className="flex flex-col items-center"><span className={`grid size-8 place-items-center rounded-full ${i<=1?"bg-primary text-primary-foreground":"bg-muted text-muted-foreground"}`}>{i<1?"✓":i+1}</span>{i<timeline.length-1&&<span className={`${i===3?"h-24":"h-12"} w-0.5 ${i<1?"bg-primary":"bg-border"}`}/>}</div><div><p className="font-extrabold">{item}</p><p className="text-xs text-muted-foreground">{i===1?"Estado actual":i<1?"Completado":"Pendiente"}</p>{i===3&&<Button size="sm" variant="outline" className="mt-2" onClick={() => setQuizOpen(true)}>{answers ? "Ver mi código QR" : "Cuestionario predonación (opcional)"}</Button>}</div></div>)}</div>
-    {outcome?.kind === "temporal" && <p role="status" className="mt-5 rounded-lg tint-gold border p-4 text-sm"><b>Gracias por acercarte 💛</b><br/>Hoy tu cuerpo necesita un descanso. Podrás volver a donar a partir del <b>{outcome.until}</b>. ¡Te esperamos!</p>}
+    {outcome?.kind === "temporal" && <p role="status" className="mt-5 rounded-lg tint-gold border p-4 text-sm"><b>Gracias por acercarte 💛</b><br/>Hoy tu cuerpo necesita un descanso. {outcome.until ? <>Podrás volver a donar a partir del <b>{outcome.until}</b>. ¡Te esperamos!</> : <>Acércate al banco de sangre para tu reevaluación antes de volver a donar.</>}</p>}
     {outcome?.kind === "lab_rechazo" && <p role="status" className="mt-5 rounded-lg border bg-muted p-4 text-sm"><b>Citación confidencial</b><br/>Acércate al banco de sangre con tu DNI para entrega de resultados y consejería médica.</p>}
     {quizOpen && <PreDonationQuiz answers={answers} onSave={a => { setAnswers(a); localStorage.setItem(QUIZ_KEY, JSON.stringify(a)); }} onClose={() => setQuizOpen(false)} />}
     {cancelled ? <p role="status" className="mt-4 rounded-md bg-muted p-3 text-sm font-bold">Proceso cancelado. El solicitante fue notificado y podrá buscar nuevos donantes.</p> : confirmCancel ? <div className="mt-4 rounded-lg border border-destructive/40 bg-card p-4"><p className="text-sm font-bold">¿Seguro que deseas cancelar la donación? El solicitante será notificado.</p><div className="mt-3 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => setConfirmCancel(false)}>Volver</Button><Button variant="vivid" onClick={() => { setCancelled(true); setConfirmCancel(false); }}>Sí, cancelar</Button></div></div> : <Button className="mt-4 w-full" variant="outline" onClick={() => setConfirmCancel(true)}>Cancelar proceso</Button>}
@@ -480,16 +481,7 @@ function Field({label,name,type="text",placeholder}:{label:string;name:string;ty
 function FieldSelect({label,name,options}:{label:string;name:string;options:string[]}){return <label className="block text-sm font-bold">{label}<select name={name} className="mt-1.5 w-full rounded-md border bg-surface px-3 py-3 font-normal">{options.map(x=><option key={x}>{x}</option>)}</select></label>}
 
 const QUIZ_KEY = "nexovital-predonacion";
-const QUIZ = [
-  "¿Te sientes bien de salud hoy?",
-  "¿Has dormido al menos 6 horas anoche?",
-  "¿Has comido algo en las últimas 4 horas?",
-  "¿Has tenido fiebre, gripe o infección en los últimos 14 días?",
-  "¿Has tomado antibióticos u otros medicamentos en la última semana?",
-  "¿Te has hecho un tatuaje, piercing o acupuntura en los últimos 12 meses?",
-  "¿Has tenido alguna cirugía o transfusión en los últimos 12 meses?",
-  "¿Has consumido alcohol en las últimas 24 horas?",
-];
+const QUIZ = PREDONATION_QUESTIONS;
 function PreDonationQuiz({ answers, onSave, onClose }: { answers: Record<string, string> | null; onSave: (a: Record<string, string>) => void; onClose: () => void }) {
   const [editing, setEditing] = useState(!answers);
   const [draft, setDraft] = useState<Record<string, string>>(answers ?? {});
